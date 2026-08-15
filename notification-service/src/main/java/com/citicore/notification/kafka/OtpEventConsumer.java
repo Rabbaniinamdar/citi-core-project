@@ -50,7 +50,7 @@ public class OtpEventConsumer {
             emailService.sendHtml(
                     event.getEmail(),
                     "CitiCore — Your Verification OTP",
-                    OtpEmailTemplate.otpTemplate(event.getEmail(), event.getOtp())
+                    OtpEmailTemplate.otpTemplate(event.getEmail(), event.getVerificationCode())
             );
 
             ack.acknowledge(); // ✅ offset committed only after email delivered

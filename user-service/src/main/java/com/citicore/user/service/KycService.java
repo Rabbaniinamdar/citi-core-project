@@ -1,6 +1,7 @@
 package com.citicore.user.service;
 
 import com.citicore.user.entity.KycDocument;
+import com.citicore.user.kafka.KafkaProducerService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -32,16 +33,20 @@ public class KycService {
     private final S3Client      s3Client;
     private final S3Presigner   s3Presigner;
     private final UserService   userService;
+    private final KafkaProducerService kafkaProducerService;
 
     @Value("${aws.s3.bucket}")
     private String bucketName;
 
+
+
     public KycService(S3Client s3Client,
                       S3Presigner s3Presigner,
-                      UserService userService) {
+                      UserService userService, KafkaProducerService kafkaProducerService) {
         this.s3Client    = s3Client;
         this.s3Presigner = s3Presigner;
         this.userService = userService;
+        this.kafkaProducerService = kafkaProducerService;
     }
 
     /**
@@ -50,11 +55,12 @@ public class KycService {
      * @param authUserId   authenticated user's ID
      * @param documentType e.g. "AADHAAR", "PAN", "PASSPORT"
      * @param file         multipart file from the HTTP request
+     * @param email
      * @return saved KycDocument entity with S3 key
      */
     public KycDocument uploadDocument(Long authUserId,
                                       String documentType,
-                                      MultipartFile file) throws IOException {
+                                      MultipartFile file, String email) throws IOException {
 
         validateFile(file);
 
@@ -79,6 +85,12 @@ public class KycService {
         s3Client.putObject(putRequest,
                 RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
 
+        // Publish event → notification-service sends document upload confirmation
+        kafkaProducerService.publishKycEvent(
+                authUserId,
+                email,
+                "UNDER_REVIEW"
+        );
         System.out.println("☁️ [S3 UPLOAD] key=" + s3Key + " | size=" + file.getSize());
 
         // ── Save metadata to DB via UserService ───────────────────────────────

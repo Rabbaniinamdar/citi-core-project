@@ -16,11 +16,16 @@ spring:
           clone-on-start: true
     bus:
       enabled: true
-  kafka:
-    bootstrap-servers: localhost:9092
+    stream:
+      kafka:
+        binder:
+          brokers: localhost:9092
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,busrefresh
+  endpoint:
+    health:
+      show-details: always

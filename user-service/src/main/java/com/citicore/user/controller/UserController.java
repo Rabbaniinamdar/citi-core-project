@@ -1,19 +1,22 @@
 package com.citicore.user.controller;
 
 import com.citicore.user.dto.*;
-import com.citicore.user.entity.AuthUser;
 import com.citicore.user.entity.KycStatus;
 import com.citicore.user.entity.UserProfile;
 import com.citicore.user.service.UserService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v1/user")
+@RequestMapping("/api/v1/users")
 @RefreshScope
 public class UserController {
+
+    @Value("${details.name}")
+    private String testing;
 
     private final UserService userService;
 
@@ -39,10 +42,17 @@ public class UserController {
      *   "pincode": "500001"
      * }
      */
+
+
+
+
+    @GetMapping("/test")
+    public ResponseEntity<String> test() {
+        return ResponseEntity.ok(testing);
+    }
     @PostMapping("/profile")
     public ResponseEntity<ApiResponse<ProfileResponse>> createProfile(
             @RequestBody CreateProfileRequest request) {
-
         AuthUser authUser = getAuthUser();
         UserProfile profile = userService.createProfile(request, authUser.getId());
         return ResponseEntity.ok(ApiResponse.success(

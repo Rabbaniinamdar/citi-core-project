@@ -50,7 +50,7 @@ public class KafkaProducerService {
             KycEvent event = new KycEvent(userId, email, status);
             String payload = objectMapper.writeValueAsString(event);
 
-            stringKafkaTemplate.send("kyc-topic", userId.toString(), payload);
+            stringKafkaTemplate.send("kyc-topic", payload);
 
             System.out.println("📤 [KYC EVENT] userId=" + userId
                     + " | status=" + status

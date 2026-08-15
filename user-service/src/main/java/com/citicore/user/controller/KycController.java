@@ -1,9 +1,9 @@
 package com.citicore.user.controller;
 
 import com.citicore.user.dto.ApiResponse;
+import com.citicore.user.dto.AuthUser;
 import com.citicore.user.dto.KycReviewRequest;
 import com.citicore.user.dto.ProfileResponse;
-import com.citicore.user.entity.AuthUser;
 import com.citicore.user.entity.KycDocument;
 import com.citicore.user.entity.KycStatus;
 import com.citicore.user.entity.UserProfile;
@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/v1/kyc")
+@RequestMapping("/api/v1/users/kyc")
 @RefreshScope
 public class KycController {
 
@@ -55,7 +55,7 @@ public class KycController {
 
         try {
             KycDocument document = kycService.uploadDocument(
-                    authUser.getId(), documentType, file);
+                    authUser.getId(), documentType, file,getAuthUser().getEmail());
 
             return ResponseEntity.ok(ApiResponse.success(
                     "Document uploaded successfully. KYC is now under review.",

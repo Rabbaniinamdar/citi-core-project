@@ -7,6 +7,8 @@ public class KycEvent {
     private Long userId;
     private String email;
     private String filePath;
+    private String status;
+
     KycEvent(){}
 
     public KycEvent(KycEventType eventType, Long documentId, Long userId, String email, String filePath) {
@@ -18,7 +20,9 @@ public class KycEvent {
     }
 
     public KycEvent(Long userId, String email, String status) {
-
+        this.userId = userId;
+        this.email = email;
+        this.status = status;
     }
 
     public KycEventType getEventType() {
@@ -59,5 +63,13 @@ public class KycEvent {
 
     public void setFilePath(String filePath) {
         this.filePath = filePath;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 }
