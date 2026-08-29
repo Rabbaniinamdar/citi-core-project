@@ -1,0 +1,17 @@
+[mysqld]
+
+# Unique ID for the primary MySQL server
+server-id=1
+
+# Enable binary logging
+log-bin=mysql-bin
+
+# Use row-based replication
+binlog-format=ROW
+
+# Enable GTID
+gtid-mode=ON
+enforce-gtid-consistency=ON
+
+# Allow replicated transactions to be written to the binary log
+log-replica-updates=ONGet-Content .\mysql-config\primary.cnf

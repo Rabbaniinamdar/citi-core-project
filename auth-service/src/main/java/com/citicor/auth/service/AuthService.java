@@ -44,27 +44,81 @@ public class AuthService {
     @Value("${jwt.refresh-token-expiration}")
     private long refreshTokenDuration;
 
+//    public void register(RegisterRequest req) {
+//        User user = new User();
+//        if (userRepo.findByEmail(req.getEmail()).isPresent()) {
+//            throw new AuthException("Email already registered", HttpStatus.CONFLICT);
+//        }
+//        user.setEmail(req.getEmail());
+//        user.setPassword(encoder.encode(req.getPassword()));
+//        user.setEmailVerified(false);
+//        user.setStatus(UserStatus.PENDING);
+//        user.setVerificationCode(generateVerificationCode());
+//        user.setVerificationCodeExpiresAt(LocalDateTime.now().plusMinutes(15));
+//        Role role = roleRepo.findByName("ROLE_CUSTOMER")
+//                .orElseThrow(()->
+//                        new AuthException("role not found", HttpStatus.NOT_FOUND)
+//                );
+//
+//        user.getRoles().add(role);
+//        userRepo.save(user);
+//        sendVerificationEmail(user);
+//    }
     public void register(RegisterRequest req) {
-        User user = new User();
+
+        System.out.println("========== REGISTER START ==========");
+
+        System.out.println("Checking email...");
         if (userRepo.findByEmail(req.getEmail()).isPresent()) {
-            throw new AuthException("Email already registered", HttpStatus.CONFLICT);
+            System.out.println("Email already exists");
+            throw new AuthException(
+                    "Email already registered",
+                    HttpStatus.CONFLICT
+            );
         }
+
+        System.out.println("Encoding password...");
+        User user = new User();
+
         user.setEmail(req.getEmail());
         user.setPassword(encoder.encode(req.getPassword()));
         user.setEmailVerified(false);
         user.setStatus(UserStatus.PENDING);
+
+        System.out.println("Generating verification code...");
         user.setVerificationCode(generateVerificationCode());
-        user.setVerificationCodeExpiresAt(LocalDateTime.now().plusMinutes(15));
+        user.setVerificationCodeExpiresAt(
+                LocalDateTime.now().plusMinutes(15)
+        );
+
+        System.out.println("Finding ROLE_CUSTOMER...");
+
         Role role = roleRepo.findByName("ROLE_CUSTOMER")
-                .orElseThrow(()->
-                        new AuthException("role not found", HttpStatus.NOT_FOUND)
+                .orElseThrow(() ->
+                        new AuthException(
+                                "role not found",
+                                HttpStatus.NOT_FOUND
+                        )
                 );
 
         user.getRoles().add(role);
-        userRepo.save(user);
-        sendVerificationEmail(user);
-    }
 
+        System.out.println("Saving user...");
+
+        userRepo.save(user);
+
+        System.out.println(
+                "USER SAVED. ID = " + user.getId()
+        );
+
+        System.out.println("Publishing OTP event...");
+
+        sendVerificationEmail(user);
+
+        System.out.println("OTP EVENT PUBLISHED");
+
+        System.out.println("========== REGISTER END ==========");
+    }
     public AuthResponse login(LoginRequest req) {
         User user = userRepo.findByEmail(req.getEmail())
                 .orElseThrow(() ->

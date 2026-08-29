@@ -1,0 +1,22 @@
+[mysqld]
+
+server-id = 2
+
+relay-log = relay-bin
+
+log-bin = mysql-bin
+log-replica-updates = ON
+
+gtid-mode = ON
+enforce-gtid-consistency = ON
+
+bind-address = 0.0.0.0
+
+# ✅ ADD THESE — prevents app from accidentally writing to replica
+read_only = ON
+super_read_only = ON
+
+# ✅ ADD THIS — parallel replication reduces lag
+slave_parallel_workers = 4
+slave_parallel_type = LOGICAL_CLOCK
+slave_preserve_commit_order = ON

@@ -1,0 +1,4 @@
+FROM mysql:8.0
+COPY primary.cnf /etc/mysql/conf.d/primary.cnf
+RUN chmod 644 /etc/mysql/conf.d/primary.cnf
+COPY init-primary.sql /docker-entrypoint-initdb.d/01-init.sql
