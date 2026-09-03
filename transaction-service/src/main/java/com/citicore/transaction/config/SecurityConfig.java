@@ -1,6 +1,6 @@
 package com.citicore.transaction.config;
 
-import com.citicore.user.security.JwtAuthenticationFilter;
+import com.citicore.transaction.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 

@@ -66,41 +66,7 @@ public class AccountController {
         return ResponseEntity.ok(ApiResponse.success("Accounts fetched", response));
     }
 
-    /**
-     * GET /api/v1/account/balance/{accNo}
-     * Returns the current balance for the given account number.
-     * Served from Redis cache (Cache-Aside pattern) — fast ⚡
-     */
-    @GetMapping("/balance/{accNo}")
-    public ResponseEntity<ApiResponse<BigDecimal>> getBalance(
-            @PathVariable String accNo) {
-        BigDecimal balance = accountService.getBalance(accNo);
-        return ResponseEntity.ok(ApiResponse.success("Balance fetched", balance));
-    }
 
-    /**
-     * GET /api/v1/account/mini-statement/{accNo}
-     * Returns the last 10 transactions for the given account.
-     */
-    @GetMapping("/mini-statement/{accNo}")
-    public ResponseEntity<ApiResponse<List<AccountStatement>>> getMiniStatement(
-            @PathVariable String accNo) {
-        List<AccountStatement> statements = accountService.getMiniStatement(accNo);
-        return ResponseEntity.ok(ApiResponse.success("Mini statement fetched", statements));
-    }
-
-    /**
-     * GET /api/v1/account/statement/{accNo}?page=0&size=10
-     * Returns paginated full statement for the given account.
-     */
-    @GetMapping("/statement/{accNo}")
-    public ResponseEntity<ApiResponse<Page<AccountStatement>>> getStatement(
-            @PathVariable String accNo,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        Page<AccountStatement> statement = accountService.getStatement(accNo, page, size);
-        return ResponseEntity.ok(ApiResponse.success("Statement fetched", statement));
-    }
 
     /**
      * POST /api/v1/account/deposit
@@ -154,7 +120,41 @@ public class AccountController {
         accountService.validateTransfer(accNo, amount);
         return ResponseEntity.ok().build();
     }
+    /**
+     * GET /api/v1/account/balance/{accNo}
+     * Returns the current balance for the given account number.
+     * Served from Redis cache (Cache-Aside pattern) — fast ⚡
+     */
+    @GetMapping("/balance/{accNo}")
+    public ResponseEntity<ApiResponse<BigDecimal>> getBalance(@PathVariable String accNo) {
+        AuthUser authUser = getAuthUser();
+        BigDecimal balance = accountService.getBalance(accNo, authUser.getId());
+        return ResponseEntity.ok(ApiResponse.success("Balance fetched", balance));
+    }
 
+    /**
+     * GET /api/v1/account/mini-statement/{accNo}
+     * Returns the last 10 transactions for the given account.
+     */
+    @GetMapping("/mini-statement/{accNo}")
+    public ResponseEntity<ApiResponse<List<AccountStatement>>> getMiniStatement(@PathVariable String accNo) {
+        AuthUser authUser = getAuthUser();
+        List<AccountStatement> statements = accountService.getMiniStatement(accNo, authUser.getId());
+        return ResponseEntity.ok(ApiResponse.success("Mini statement fetched", statements));
+    }
+    /**
+     * GET /api/v1/account/statement/{accNo}?page=0&size=10
+     * Returns paginated full statement for the given account.
+     */
+    @GetMapping("/statement/{accNo}")
+    public ResponseEntity<ApiResponse<Page<AccountStatement>>> getStatement(
+            @PathVariable String accNo,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        AuthUser authUser = getAuthUser();
+        Page<AccountStatement> statement = accountService.getStatement(accNo, page, size, authUser.getId());
+        return ResponseEntity.ok(ApiResponse.success("Statement fetched", statement));
+    }
     // ─────────────────────────────────────────────────────────────────────────────
 
     private AuthUser getAuthUser() {

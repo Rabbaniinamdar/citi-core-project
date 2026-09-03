@@ -1,0 +1,233 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: apigateway-service
+
+  # ==========================================================
+  # REDIS
+  # ==========================================================
+
+  data:
+    redis:
+      host: redis
+      port: 6379
+
+  # ==========================================================
+  # GATEWAY ROUTES
+  # ==========================================================
+
+  cloud:
+    gateway:
+      routes:
+
+        # ====================================================
+        # AUTH SERVICE
+        # ====================================================
+
+        - id: auth-service
+
+          uri: http://auth-service:8081
+
+          predicates:
+            - Path=/auth/**
+            - Method=GET,POST
+
+          filters:
+            - RewritePath=/auth/(?<segment>.*), /api/v1/auth/${segment}
+
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 2
+                redis-rate-limiter.burstCapacity: 4
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+
+        # ====================================================
+        # USER SERVICE
+        # ====================================================
+
+        - id: user-service
+
+          uri: http://user-service:8082
+
+          predicates:
+            - Path=/users/**
+
+          filters:
+            - RewritePath=/users/(?<segment>.*), /api/v1/users/${segment}
+
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 2
+                redis-rate-limiter.burstCapacity: 4
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
+            - name: CircuitBreaker
+              args:
+                name: userCircuitBreaker
+                fallbackUri: forward:/fallback/users
+
+            - name: Retry
+              args:
+                retries: 1
+                methods: GET
+
+                statuses:
+                  - BAD_GATEWAY
+                  - GATEWAY_TIMEOUT
+                  - INTERNAL_SERVER_ERROR
+
+                exceptions:
+                  - java.util.concurrent.TimeoutException
+
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: true
+
+
+        # ====================================================
+        # ACCOUNT SERVICE
+        # ====================================================
+
+        - id: account-service
+
+          uri: http://account-service:8083
+
+          predicates:
+            - Path=/accounts/**
+
+          filters:
+            - RewritePath=/accounts/(?<segment>.*), /api/v1/accounts/${segment}
+
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 2
+                redis-rate-limiter.burstCapacity: 4
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
+            - name: CircuitBreaker
+              args:
+                name: accountCircuitBreaker
+                fallbackUri: forward:/fallback/account
+
+            - name: Retry
+              args:
+                retries: 1
+                methods: GET
+
+                statuses:
+                  - BAD_GATEWAY
+                  - GATEWAY_TIMEOUT
+                  - INTERNAL_SERVER_ERROR
+
+                exceptions:
+                  - java.util.concurrent.TimeoutException
+
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: true
+
+
+        # ====================================================
+        # TRANSACTION SERVICE
+        # ====================================================
+
+        - id: transaction-service
+
+          uri: http://transaction-service:8084
+
+          predicates:
+            - Path=/transaction/**
+
+          filters:
+            - RewritePath=/transaction/(?<segment>.*), /api/v1/transaction/${segment}
+
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 2
+                redis-rate-limiter.burstCapacity: 4
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
+            - name: CircuitBreaker
+              args:
+                name: transactionCircuitBreaker
+                fallbackUri: forward:/fallback/transaction
+
+            - name: Retry
+              args:
+                retries: 1
+                methods: GET
+
+                statuses:
+                  - BAD_GATEWAY
+                  - GATEWAY_TIMEOUT
+                  - INTERNAL_SERVER_ERROR
+
+                exceptions:
+                  - java.util.concurrent.TimeoutException
+
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: true
+
+
+        # ====================================================
+        # NOTIFICATION SERVICE
+        # ====================================================
+
+        - id: notification-service
+
+          uri: http://notification-service:8085
+
+          predicates:
+            - Path=/notifications/**
+
+          filters:
+            - RewritePath=/notifications/(?<segment>.*), /api/v1/notifications/${segment}
+
+# ============================================================
+# RESILIENCE4J
+# ============================================================
+
+resilience4j:
+
+  timelimiter:
+    instances:
+
+      authCircuitBreaker:
+        timeout-duration: 3s
+
+      userCircuitBreaker:
+        timeout-duration: 3s
+
+      accountCircuitBreaker:
+        timeout-duration: 3s
+
+      transactionCircuitBreaker:
+        timeout-duration: 3s
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    com.citicore.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO

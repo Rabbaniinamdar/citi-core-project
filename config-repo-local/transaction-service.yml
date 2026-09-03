@@ -1,0 +1,66 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: transaction-service
+
+  # ==========================================================
+  # MYSQL
+  # ==========================================================
+
+  datasource:
+    url: jdbc:mysql://mysql:3306/citicore_transactiondb?serverTimezone=UTC
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  # ==========================================================
+  # KAFKA
+  # ==========================================================
+
+  kafka:
+    bootstrap-servers: kafka:9092
+
+    consumer:
+      group-id: transaction-group
+
+  # ==========================================================
+  # FEIGN
+  # ==========================================================
+
+  cloud:
+    openfeign:
+      client:
+        config:
+          account-service:
+            connect-timeout: 3000
+            read-timeout: 5000
+
+  # ==========================================================
+  # SCHEDULING
+  # ==========================================================
+
+  task:
+    scheduling:
+      pool:
+        size: 2
+
+# ============================================================
+# TRANSACTION BUSINESS RULES
+# ============================================================
+
+citicore:
+  transaction:
+    daily-limit:
+      TRANSFER: 500000
+      DEPOSIT: 1000000
+      WITHDRAWAL: 200000
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    com.citicore.transaction: DEBUG

@@ -26,7 +26,7 @@ services:
   mysql-primary:
     build:
       context: ./mysql-config
-      dockerfile: Dockerfile.primary
+      dockerfile: Dockerfile.local.primary
     container_name: citicore-mysql-primary
     restart: unless-stopped
     ports:
@@ -51,7 +51,7 @@ services:
   mysql-replica:
     build:
       context: ./mysql-config
-      dockerfile: Dockerfile.replica
+      dockerfile: Dockerfile.local.replica
     container_name: citicore-mysql-replica
     restart: unless-stopped
     ports:

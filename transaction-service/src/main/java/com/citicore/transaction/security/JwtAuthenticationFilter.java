@@ -1,4 +1,4 @@
-package com.citicore.user.security;
+package com.citicore.transaction.security;
 
 import com.citicore.transaction.entity.AuthUser;
 import jakarta.servlet.FilterChain;

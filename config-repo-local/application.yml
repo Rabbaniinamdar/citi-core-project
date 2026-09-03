@@ -1,0 +1,133 @@
+# ============================================================
+# CitiCore LOCAL SHARED CONFIGURATION
+# ============================================================
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka
+    fetch-registry: true
+    register-with-eureka: true
+
+  instance:
+    prefer-ip-address: true
+
+spring:
+
+  # ==========================================================
+  # JPA
+  # ==========================================================
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+    show-sql: true
+
+    properties:
+      hibernate:
+        format_sql: true
+
+  # ==========================================================
+  # MVC
+  # ==========================================================
+  mvc:
+    throw-exception-if-no-handler-found: true
+
+  # ==========================================================
+  # REDIS
+  # ==========================================================
+  data:
+    redis:
+      host: redis
+      port: 6379
+      timeout: 2000ms
+
+  # ==========================================================
+  # KAFKA
+  # ==========================================================
+  kafka:
+    bootstrap-servers: kafka:9092
+
+  # ==========================================================
+  # CLOUD NETWORK
+  # ==========================================================
+  cloud:
+    inetutils:
+      ignored-interfaces:
+        - docker0
+        - veth.*
+
+# ============================================================
+# SERVER ERROR
+# ============================================================
+
+server:
+  error:
+    include-message: always
+    include-binding-errors: always
+
+# ============================================================
+# ACTUATOR
+# ============================================================
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,refresh
+
+  endpoint:
+    health:
+      show-details: always
+
+  metrics:
+    enable:
+      all: true
+
+# ============================================================
+# RESILIENCE4J
+# ============================================================
+
+resilience4j:
+
+  timelimiter:
+    instances:
+      default:
+        timeout-duration: 3s
+
+  circuitbreaker:
+    instances:
+
+      default:
+        register-health-indicator: true
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 2
+
+        record-exceptions:
+          - org.springframework.web.client.HttpClientErrorException
+          - java.util.concurrent.TimeoutException
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    root: INFO
+    org.apache.kafka: WARN
+    org.springframework.security: WARN
+    org.springframework.kafka: INFO
+    org.hibernate.SQL: WARN
+
+# ============================================================
+# JWT
+# ============================================================
+
+jwt:
+  secret: ${JWT_SECRET}
+
+  access-token-expiration: 1000000
+
+  refresh-token-expiration: 604800000

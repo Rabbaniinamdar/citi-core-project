@@ -1,0 +1,51 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: notification-service
+
+  # ==========================================================
+  # GMAIL SMTP
+  # ==========================================================
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+
+    properties:
+      mail:
+        smtp:
+          auth: true
+
+          starttls:
+            enable: true
+            required: true
+
+          ssl:
+            trust: smtp.gmail.com
+            protocols: TLSv1.2
+
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+
+  # ==========================================================
+  # KAFKA
+  # ==========================================================
+
+  kafka:
+    bootstrap-servers: kafka:9092
+
+    consumer:
+      group-id: notification-group
+
+logging:
+  level:
+    com.citicore.notification: DEBUG
+    org.springframework.mail: DEBUG
+    jakarta.mail: DEBUG
+    org.eclipse.angus.mail: DEBUG

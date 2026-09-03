@@ -1,19 +1,20 @@
 spring:
   application:
-    name: account-service
+    name: transaction-service
 
   config:
-    import: optional:configserver:http://localhost:8888
-  data:
-    redis:
-      host: localhost
-      port: 6379
+    import: optional:configserver:http://citicore-config-alb-1654378622.ap-south-1.elb.amazonaws.com
 
-citicore:
-  account:
-    min-savings-balance: 1000
-    min-current-balance: 5000
+  kafka:
+    bootstrap-servers: localhost:9092
 
-  fd:
-    default-rate: 6.5
-    compounding-frequency: 4
+  datasource:
+    url: jdbc:mysql://localhost:3306/citicore_transaction
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true

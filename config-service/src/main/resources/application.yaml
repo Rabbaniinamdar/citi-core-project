@@ -28,4 +28,4 @@ management:
         include: health,info,busrefresh
   endpoint:
     health:
-      show-details: always
+      show- always

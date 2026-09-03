@@ -7,7 +7,6 @@ import com.citicore.transaction.entity.*;
 import com.citicore.transaction.exception.DailyLimitExceededException;
 import com.citicore.transaction.repository.OutboxRepository;
 import com.citicore.transaction.repository.TransactionRepository;
-import com.citicore.transaction.util.TxnRefGenerator;
 import com.citicore.transaction.entity.AuthUser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;

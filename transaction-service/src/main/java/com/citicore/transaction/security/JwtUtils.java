@@ -1,7 +1,4 @@
-
-
-
-package com.citicore.user.security;
+package com.citicore.transaction.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;

@@ -14,17 +14,14 @@ import java.util.Optional;
 
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
 
-    Optional<Transaction> findByTxnId(String txnId);
-
-    // Used across service via getTxnRef() alias
-    default Optional<Transaction> findByTxnRef(String txnRef) {
-        return findByTxnId(txnRef);
-    }
+    Optional<Transaction> findByTxnRef(String txnRef);
 
     Page<Transaction> findByAuthUserId(Long authUserId, Pageable pageable);
 
     Page<Transaction> findByAuthUserIdAndStatus(
-            Long authUserId, TransactionStatus status, Pageable pageable);
+            Long authUserId,
+            TransactionStatus status,
+            Pageable pageable);
 
     /**
      * Calculates total amount transferred by a user today.

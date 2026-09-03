@@ -6,7 +6,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 
-public interface OutboxRepository extends JpaRepository<OutboxEvent, Long> {
+public interface OutboxRepository extends JpaRepository<OutboxEvent, String> {
 
     List<OutboxEvent> findByStatus(OutboxStatus status);
+
+    List<OutboxEvent> findByStatusIn(
+            List<OutboxStatus> statuses
+    );
 }

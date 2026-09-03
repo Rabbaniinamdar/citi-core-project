@@ -117,120 +117,6 @@ public class AccountService {
         return account;
     }
 
-    @Transactional
-    public void debit(String accNo, BigDecimal amount, String txnRef,
-                      Long authUserId, String email) {
-
-        if (statementRepository.existsByTxnRef(txnRef)) {
-            System.out.println("⚠️ [DEBIT] Duplicate txnRef=" + txnRef + " — skipping");
-            return;
-        }
-
-        // Pessimistic lock on PRIMARY — must not route to replica
-        Account account = accountRepository
-                .findByAccountNumberWithLock(accNo)
-                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accNo));
-
-        if (!account.getAuthUserId().equals(authUserId)) {
-            throw new UnauthorizedAccountAccessException(
-                    "Unauthorized: account does not belong to user " + authUserId);
-        }
-        if (account.getBalance().compareTo(amount) < 0) {
-            throw new InsufficientBalanceException("Insufficient balance");
-        }
-
-        BigDecimal newBalance = account.getBalance().subtract(amount);
-
-        if (account.getAccountType() == AccountType.SAVINGS
-                && newBalance.compareTo(minSavings) < 0) {
-            throw new MinimumBalanceViolationException(
-                    "Minimum savings balance of ₹" + minSavings + " must be maintained.");
-        }
-        if (account.getAccountType() == AccountType.CURRENT
-                && newBalance.compareTo(minCurrent) < 0) {
-            throw new MinimumBalanceViolationException(
-                    "Minimum current balance of ₹" + minCurrent + " must be maintained.");
-        }
-
-        account.setBalance(newBalance);
-        accountRepository.save(account);
-
-        // Proactive cache update — next getBalance() will be a Redis HIT
-        String cacheKey = "account:" + accNo + ":balance";
-        redisTemplate.opsForValue().set(cacheKey, newBalance, 5, TimeUnit.MINUTES);
-
-        statementRepository.save(new AccountStatement.Builder()
-                .txnRef(txnRef)
-                .accountNumber(accNo)
-                .transactionType(TransactionType.DEBIT)
-                .amount(amount)
-                .balanceAfterTxn(newBalance)
-                .description("Debit Transaction")
-                .build());
-
-        saveToOutbox(new AccountEvent(
-                        AccountEventType.ACCOUNT_DEBITED, accNo, email, amount, txnRef),
-                accNo, "account-events-topic");
-
-        System.out.println("✅ [PRIMARY WRITE] debit txnRef=" + txnRef
-                + " | newBalance=" + newBalance);
-    }
-
-    @Transactional
-    public void credit(String accNo, BigDecimal amount, String txnRef,
-                       Long authUserId, String email) {
-
-        if (statementRepository.existsByTxnRef(txnRef)) {
-            System.out.println("⚠️ [CREDIT] Duplicate txnRef=" + txnRef + " — skipping");
-            return;
-        }
-
-        Account account = accountRepository
-                .findByAccountNumberWithLock(accNo)
-                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accNo));
-
-        BigDecimal newBalance = account.getBalance().add(amount);
-        account.setBalance(newBalance);
-        accountRepository.save(account);
-
-        String cacheKey = "account:" + accNo + ":balance";
-        redisTemplate.opsForValue().set(cacheKey, newBalance, 5, TimeUnit.MINUTES);
-
-        statementRepository.save(new AccountStatement.Builder()
-                .txnRef(txnRef)
-                .accountNumber(accNo)
-                .transactionType(TransactionType.CREDIT)
-                .amount(amount)
-                .balanceAfterTxn(newBalance)
-                .description("Credit Transaction")
-                .build());
-
-        saveToOutbox(new AccountEvent(
-                        AccountEventType.ACCOUNT_CREDITED, accNo, email, amount, txnRef),
-                accNo, "account-events-topic");
-
-        System.out.println("✅ [PRIMARY WRITE] credit txnRef=" + txnRef
-                + " | newBalance=" + newBalance);
-    }
-
-    @Transactional
-    public void deposit(String accNo, BigDecimal amount,
-                        String txnRef, Long authUserId, String email) {
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Deposit amount must be positive");
-        }
-        credit(accNo, amount, txnRef, authUserId, email);
-    }
-
-    @Transactional
-    public void withdraw(String accNo, BigDecimal amount,
-                         String txnRef, Long authUserId, String email) {
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Withdrawal amount must be positive");
-        }
-        debit(accNo, amount, txnRef, authUserId, email);
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // READS → REPLICA DataSource (via @ReadOnly AOP)
     // ─────────────────────────────────────────────────────────────────────────
@@ -311,12 +197,6 @@ public class AccountService {
 
     @ReadOnly
     @Transactional(readOnly = true)
-    public BigDecimal getMyBalance(Long userId) {
-        return getDefaultAccount(userId).getBalance();
-    }
-
-    @ReadOnly
-    @Transactional(readOnly = true)
     public List<AccountStatement> getMiniStatement(String accNo) {
         System.out.println("📖 [REPLICA READ] getMiniStatement acc=" + accNo);
         return statementRepository
@@ -336,7 +216,178 @@ public class AccountService {
     // ─────────────────────────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────────────────────────
+    @Transactional
+    public void debit(String accNo, BigDecimal amount, String txnRef,
+                      Long authUserId, String email) {
+        validateAmount(amount);
 
+        if (statementRepository.existsByTxnRef(txnRef)) {
+            System.out.println("⚠️ [DEBIT] Duplicate txnRef=" + txnRef + " — skipping");
+            return;
+        }
+
+        Account account = accountRepository
+                .findByAccountNumberWithLock(accNo)
+                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accNo));
+
+        if (!account.getAuthUserId().equals(authUserId)) {
+            throw new UnauthorizedAccountAccessException(
+                    "Unauthorized: account does not belong to user " + authUserId);
+        }
+        if (account.getBalance().compareTo(amount) < 0) {
+            throw new InsufficientBalanceException("Insufficient balance");
+        }
+
+        BigDecimal newBalance = account.getBalance().subtract(amount);
+        checkMinimumBalance(account.getAccountType(), newBalance);
+
+        account.setBalance(newBalance);
+        accountRepository.save(account);
+
+        redisTemplate.opsForValue().set(
+                "account:" + accNo + ":balance", newBalance, 5, TimeUnit.MINUTES);
+
+        statementRepository.save(new AccountStatement.Builder()
+                .txnRef(txnRef)
+                .accountNumber(accNo)
+                .transactionType(TransactionType.DEBIT)
+                .amount(amount)
+                .balanceAfterTxn(newBalance)
+                .description("Debit Transaction")
+                .build());
+
+        saveToOutbox(new AccountEvent(
+                        AccountEventType.ACCOUNT_DEBITED, accNo, email, amount, txnRef),
+                accNo, "account-events-topic");
+    }
+
+    // NOTE: same lock method as debit() — this is the critical fix.
+    // Ownership check is intentionally NOT added here — see deposit() below
+    // for where that decision needs to be made.
+    @Transactional
+    public void credit(String accNo, BigDecimal amount, String txnRef,
+                       Long authUserId, String email) {
+        validateAmount(amount);
+
+        if (statementRepository.existsByTxnRef(txnRef)) {
+            System.out.println("⚠️ [CREDIT] Duplicate txnRef=" + txnRef + " — skipping");
+            return;
+        }
+
+        Account account = accountRepository
+                .findByAccountNumberWithLock(accNo)   // <-- was findByAccountNumber (no lock)
+                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accNo));
+
+        BigDecimal newBalance = account.getBalance().add(amount);
+        account.setBalance(newBalance);
+        accountRepository.save(account);
+
+        redisTemplate.opsForValue().set(
+                "account:" + accNo + ":balance", newBalance, 5, TimeUnit.MINUTES);
+
+        statementRepository.save(new AccountStatement.Builder()
+                .txnRef(txnRef)
+                .accountNumber(accNo)
+                .transactionType(TransactionType.CREDIT)
+                .amount(amount)
+                .balanceAfterTxn(newBalance)
+                .description("Credit Transaction")
+                .build());
+
+        saveToOutbox(new AccountEvent(
+                        AccountEventType.ACCOUNT_CREDITED, accNo, email, amount, txnRef),
+                accNo, "account-events-topic");
+    }
+
+    @Transactional
+    public void deposit(String accNo, BigDecimal amount,
+                        String txnRef, Long authUserId, String email) {
+        validateAmount(amount);
+        // Decision needed: if deposit is self-service top-up only, uncomment:
+        // if (!accountRepository.existsByAccountNumberAndAuthUserId(accNo, authUserId)) {
+        //     throw new UnauthorizedAccountAccessException(
+        //             "Unauthorized: account does not belong to user " + authUserId);
+        // }
+        credit(accNo, amount, txnRef, authUserId, email);
+    }
+
+    @Transactional
+    public void withdraw(String accNo, BigDecimal amount,
+                         String txnRef, Long authUserId, String email) {
+        validateAmount(amount);
+        debit(accNo, amount, txnRef, authUserId, email);
+    }
+
+    // ─── READS — now with ownership checks ───
+
+    @PrimaryRead
+    @Transactional(readOnly = true)
+    public BigDecimal getBalance(String accNo, Long authUserId) {
+        assertOwnership(accNo, authUserId);
+
+        String cacheKey = "account:" + accNo + ":balance";
+        Object cached = redisTemplate.opsForValue().get(cacheKey);
+        if (cached != null) {
+            return new BigDecimal(cached.toString());
+        }
+
+        Account account = accountRepository
+                .findByAccountNumber(accNo)
+                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accNo));
+
+        redisTemplate.opsForValue().set(cacheKey, account.getBalance(), 5, TimeUnit.MINUTES);
+        return account.getBalance();
+    }
+
+    @ReadOnly
+    @Transactional(readOnly = true)
+    public List<AccountStatement> getMiniStatement(String accNo, Long authUserId) {
+        assertOwnership(accNo, authUserId);
+        return statementRepository.findTop10ByAccountNumberOrderByCreatedAtDesc(accNo);
+    }
+
+    @ReadOnly
+    @Transactional(readOnly = true)
+    public Page<AccountStatement> getStatement(String accNo, int page, int size, Long authUserId) {
+        assertOwnership(accNo, authUserId);
+        return statementRepository.findByAccountNumberOrderByCreatedAtDesc(
+                accNo, PageRequest.of(page, size));
+    }
+
+    @ReadOnly
+    @Transactional(readOnly = true)
+    public BigDecimal getMyBalance(Long userId) {
+        // delegate to the cache-aware, primary-forced path instead of a raw replica read
+        String accNo = getDefaultAccount(userId).getAccountNumber();
+        return getBalance(accNo, userId);
+    }
+
+    // ─── PRIVATE HELPERS ───
+
+    private void validateAmount(BigDecimal amount) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+    }
+
+    private void checkMinimumBalance(AccountType type, BigDecimal newBalance) {
+        if (type == AccountType.SAVINGS && newBalance.compareTo(minSavings) < 0) {
+            throw new MinimumBalanceViolationException(
+                    "Minimum savings balance of ₹" + minSavings + " must be maintained.");
+        }
+        if (type == AccountType.CURRENT && newBalance.compareTo(minCurrent) < 0) {
+            throw new MinimumBalanceViolationException(
+                    "Minimum current balance of ₹" + minCurrent + " must be maintained.");
+        }
+    }
+
+    private void assertOwnership(String accNo, Long authUserId) {
+        boolean owns = accountRepository.existsByAccountNumberAndAuthUserId(accNo, authUserId);
+        if (!owns) {
+            throw new UnauthorizedAccountAccessException(
+                    "Unauthorized: account does not belong to user " + authUserId);
+        }
+    }
     private void saveToOutbox(Object event, String accountNumber, String topic) {
         try {
             String payload = objectMapper.writeValueAsString(event);

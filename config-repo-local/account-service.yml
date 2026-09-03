@@ -1,0 +1,109 @@
+server:
+  port: 8083
+  address: 0.0.0.0
+
+spring:
+  application:
+    name: account-service
+
+  # ==========================================================
+  # Disable Spring Boot's default datasource auto config
+  # because Account Service has custom primary/replica
+  # datasource configuration.
+  # ==========================================================
+
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+
+  datasource:
+
+    # ========================================================
+    # PRIMARY
+    # ========================================================
+
+    primary:
+      jdbc-url: jdbc:mysql://mysql:3306/citicore_account?serverTimezone=UTC
+      username: ${DB_USERNAME}
+      password: ${DB_PASSWORD}
+      driver-class-name: com.mysql.cj.jdbc.Driver
+
+    # ========================================================
+    # REPLICA
+    # ========================================================
+
+    replica:
+      jdbc-url: jdbc:mysql://mysql:3306/citicore_account?serverTimezone=UTC
+      username: ${DB_USERNAME}
+      password: ${DB_PASSWORD}
+      driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # ==========================================================
+  # JPA
+  # ==========================================================
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+    show-sql: true
+
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+  # ==========================================================
+  # SQL
+  # ==========================================================
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+  # ==========================================================
+  # REDIS
+  # ==========================================================
+
+  data:
+    redis:
+      host: redis
+      port: 6379
+      timeout: 2000ms
+
+  # ==========================================================
+  # KAFKA
+  # ==========================================================
+
+  kafka:
+    bootstrap-servers: kafka:9092
+
+  # ==========================================================
+  # SCHEDULING
+  # ==========================================================
+
+  task:
+    scheduling:
+      pool:
+        size: 2
+
+# ============================================================
+# BUSINESS RULES
+# ============================================================
+
+citicore:
+  account:
+    min-savings-balance: 1000
+    min-current-balance: 5000
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    com.citicore.account: DEBUG
+    org.springframework.data.redis: WARN
+    org.apache.kafka: WARN
+

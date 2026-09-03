@@ -1,8 +1,8 @@
 package com.citicore.transaction.exception;
 
-import com.citicore.user.exception.InsufficientBalanceException;
-import com.citicore.user.exception.KycNotCompletedException;
-import com.citicore.user.exception.MinimumBalanceViolationException;
+import com.citicore.gateway.exception.InsufficientBalanceException;
+import com.citicore.gateway.exception.KycNotCompletedException;
+import com.citicore.gateway.exception.MinimumBalanceViolationException;
 import com.citicore.transaction.dto.ApiResponse;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;

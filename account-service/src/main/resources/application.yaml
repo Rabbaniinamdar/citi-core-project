@@ -3,4 +3,27 @@ spring:
     name: account-service
 
   config:
-    import: optional:configserver:http://localhost:8888
+    import: optional:configserver:http://citicore-config-alb-1654378622.ap-south-1.elb.amazonaws.com
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+
+  datasource:
+    primary:
+      jdbc-url: jdbc:mysql://localhost:3306/citicore_account
+      username: root
+      password: root
+      driver-class-name: com.mysql.cj.jdbc.Driver
+
+    # ─── REPLICA DATABASE ─────────────────────────────────────
+    replica:
+      jdbc-url: jdbc:mysql://localhost:3306/citicore_account
+      username: root
+      password: root
+      driver-class-name: com.mysql.cj.jdbc.Driver
+
+citicore:
+  account:
+    min-savings-balance: 1000
+    min-current-balance: 5000

@@ -1,0 +1,7 @@
+CREATE DATABASE IF NOT EXISTS citicore_authdb;
+
+CREATE DATABASE IF NOT EXISTS citicore_userdb;
+
+CREATE DATABASE IF NOT EXISTS citicore_account;
+
+CREATE DATABASE IF NOT EXISTS citicore_transactiondb;

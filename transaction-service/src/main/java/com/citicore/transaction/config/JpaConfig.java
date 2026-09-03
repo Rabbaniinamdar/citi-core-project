@@ -1,4 +1,4 @@
-package com.citicore.user.config;
+package com.citicore.transaction.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
