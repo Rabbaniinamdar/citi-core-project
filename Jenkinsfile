@@ -644,12 +644,17 @@ pipeline {
                                 echo "ECS Service: ${ecsService}"
                                 echo "ECR Repository: citicore/${repository}"
                                 echo "Image Tag: ${GIT_SHA}"
+                                echo "=========================================="
 
                                 if [ "${rollbackMode}" = "true" ]; then
                                     echo "MODE: ROLLBACK"
                                 else
                                     echo "MODE: NORMAL DEPLOYMENT"
                                 fi
+
+                                # ------------------------------------------
+                                # Rollback image validation
+                                # ------------------------------------------
 
                                 if [ "${rollbackMode}" = "true" ]; then
 
@@ -665,11 +670,13 @@ pipeline {
                                     echo "Rollback image exists in ECR."
                                 fi
 
-                                echo "=========================================="
+                                # ------------------------------------------
+                                # Get current task definition
+                                # ------------------------------------------
 
                                 echo "Getting current ECS task definition..."
 
-                                TASK_DEF=\$(aws ecs describe-services \
+                                TASK_DEF=\\$(aws ecs describe-services \
                                   --cluster ${ECS_CLUSTER} \
                                   --services ${ecsService} \
                                   --region ${AWS_REGION} \
@@ -677,96 +684,165 @@ pipeline {
                                   --output text)
 
                                 echo "Current task definition:"
-                                echo "\${TASK_DEF}"
+                                echo "\\${TASK_DEF}"
+
+                                # ------------------------------------------
+                                # Download task definition
+                                # ------------------------------------------
 
                                 echo "Downloading task definition..."
 
                                 aws ecs describe-task-definition \
-                                  --task-definition "\${TASK_DEF}" \
+                                  --task-definition "\\${TASK_DEF}" \
                                   --region ${AWS_REGION} \
                                   --query 'taskDefinition' \
                                   --output json > task-definition.json
 
+                                # ------------------------------------------
+                                # Update container image
+                                # ------------------------------------------
+
                                 echo "Updating application container image..."
 
                                 python3 <<'PY'
-import json
+        import json
 
-path = "task-definition.json"
+        path = "task-definition.json"
 
-with open(path) as f:
-    data = json.load(f)
+        with open(path) as f:
+            data = json.load(f)
 
-repository = "580655778303.dkr.ecr.ap-south-1.amazonaws.com/citicore/${repository}"
-new_image = repository + ":${GIT_SHA}"
+        repository = "580655778303.dkr.ecr.ap-south-1.amazonaws.com/citicore/${repository}"
+        new_image = repository + ":${GIT_SHA}"
 
-containers = data.get("containerDefinitions", [])
+        containers = data.get("containerDefinitions", [])
 
-updated = False
+        updated = False
 
-for container in containers:
-    image = container.get("image", "")
+        for container in containers:
 
-    if repository in image:
-        print("Updating container:", container.get("name"))
-        print("Old image:", image)
-        print("New image:", new_image)
+            image = container.get("image", "")
 
-        container["image"] = new_image
-        updated = True
-        break
+            if repository in image:
 
-if not updated:
-    raise RuntimeError(
-        "Application container not found for repository: " + repository
-    )
+                print("Updating container:", container.get("name"))
+                print("Old image:", image)
+                print("New image:", new_image)
 
-# Remove ECS response-only fields.
-for field in [
-    "taskDefinitionArn",
-    "revision",
-    "status",
-    "requiresAttributes",
-    "compatibilities",
-    "registeredAt",
-    "registeredBy"
-]:
-    data.pop(field, None)
+                container["image"] = new_image
+                updated = True
+                break
 
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
+        if not updated:
 
-print("Task definition JSON updated successfully.")
-PY
+            raise RuntimeError(
+                "Application container not found for repository: " + repository
+            )
+
+        # Remove ECS response-only fields.
+
+        for field in [
+            "taskDefinitionArn",
+            "revision",
+            "status",
+            "requiresAttributes",
+            "compatibilities",
+            "registeredAt",
+            "registeredBy"
+        ]:
+
+            data.pop(field, None)
+
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        print("Task definition JSON updated successfully.")
+        PY
+
+                                # ------------------------------------------
+                                # Register task definition
+                                # ------------------------------------------
 
                                 echo "Registering new task definition..."
 
-                                NEW_TASK_DEF=\$(aws ecs register-task-definition \
+                                NEW_TASK_DEF=\\$(aws ecs register-task-definition \
                                   --cli-input-json file://task-definition.json \
                                   --region ${AWS_REGION} \
                                   --query 'taskDefinition.taskDefinitionArn' \
                                   --output text)
 
                                 echo "New task definition:"
-                                echo "\${NEW_TASK_DEF}"
+                                echo "\\${NEW_TASK_DEF}"
+
+                                # ------------------------------------------
+                                # Update ECS service
+                                # ------------------------------------------
 
                                 echo "Updating ECS service..."
 
                                 aws ecs update-service \
                                   --cluster ${ECS_CLUSTER} \
                                   --service ${ecsService} \
-                                  --task-definition "\${NEW_TASK_DEF}" \
+                                  --task-definition "\\${NEW_TASK_DEF}" \
                                   --region ${AWS_REGION} \
                                   --query 'service.taskDefinition' \
                                   --output text
 
-                                echo "Waiting briefly for ECS to accept deployment..."
+                                echo "=========================================="
+                                echo "ECS deployment started."
+                                echo "Waiting for deployment to become healthy..."
+                                echo "=========================================="
 
-                                sleep 10
+                                # ------------------------------------------
+                                # Wait for ECS service stability
+                                # ------------------------------------------
 
-                                echo "Verifying ECS service..."
+                                if aws ecs wait services-stable \
+                                  --cluster ${ECS_CLUSTER} \
+                                  --services ${ecsService} \
+                                  --region ${AWS_REGION}; then
 
-                                ACTUAL_TASK_DEF=\$(aws ecs describe-services \
+                                    echo "=========================================="
+                                    echo "ECS DEPLOYMENT SUCCESSFUL"
+                                    echo "Service: ${ecsService}"
+                                    echo "Task Definition: \\${NEW_TASK_DEF}"
+                                    echo "=========================================="
+
+                                else
+
+                                    echo "=========================================="
+                                    echo "ECS DEPLOYMENT FAILED"
+                                    echo "Service: ${ecsService}"
+                                    echo "=========================================="
+
+                                    echo "Checking ECS deployment status..."
+
+                                    aws ecs describe-services \
+                                      --cluster ${ECS_CLUSTER} \
+                                      --services ${ecsService} \
+                                      --region ${AWS_REGION} \
+                                      --query 'services[0].deployments[].{Status:status,State:rolloutState,Reason:rolloutStateReason,TaskDefinition:taskDefinition,Desired:desiredCount,Running:runningCount}' \
+                                      --output table
+
+                                    echo "Checking recent ECS service events..."
+
+                                    aws ecs describe-services \
+                                      --cluster ${ECS_CLUSTER} \
+                                      --services ${ecsService} \
+                                      --region ${AWS_REGION} \
+                                      --query 'services[0].events[0:10].[createdAt,message]' \
+                                      --output table
+
+                                    exit 1
+                                fi
+
+                                # ------------------------------------------
+                                # Final task-definition verification
+                                # ------------------------------------------
+
+                                echo "Final ECS task definition verification..."
+
+                                ACTUAL_TASK_DEF=\\$(aws ecs describe-services \
                                   --cluster ${ECS_CLUSTER} \
                                   --services ${ecsService} \
                                   --region ${AWS_REGION} \
@@ -774,20 +850,23 @@ PY
                                   --output text)
 
                                 echo "Expected:"
-                                echo "\${NEW_TASK_DEF}"
+                                echo "\\${NEW_TASK_DEF}"
 
                                 echo "Actual:"
-                                echo "\${ACTUAL_TASK_DEF}"
+                                echo "\\${ACTUAL_TASK_DEF}"
 
-                                if [ "\${ACTUAL_TASK_DEF}" != "\${NEW_TASK_DEF}" ]; then
+                                if [ "\\${ACTUAL_TASK_DEF}" != "\\${NEW_TASK_DEF}" ]; then
+
                                     echo "ERROR: ECS task definition mismatch"
+
                                     exit 1
+
                                 fi
 
                                 echo "=========================================="
-                                echo "ECS deployment accepted successfully"
+                                echo "Deployment verification completed."
                                 echo "Service: ${ecsService}"
-                                echo "Task Definition: \${NEW_TASK_DEF}"
+                                echo "Task Definition: \\${NEW_TASK_DEF}"
                                 echo "=========================================="
                             """
                         }
@@ -795,6 +874,7 @@ PY
                 }
             }
         }
+
         stage('Record Deployment') {
             when {
                 expression {
