@@ -3,6 +3,29 @@ pipeline {
     agent {
         label 'backend'
     }
+    parameters {
+        choice(
+            name: 'ROLLBACK_SERVICE',
+            choices: [
+                'NONE',
+                'account',
+                'transaction',
+                'user',
+                'auth',
+                'notification',
+                'gateway',
+                'config',
+                'eureka'
+            ],
+            description: 'Select service to rollback. Use NONE for normal deployment.'
+        )
+
+        string(
+            name: 'ROLLBACK_SHA',
+            defaultValue: '',
+            description: 'Full Git SHA / ECR image tag to rollback to'
+        )
+    }
 
     options {
         skipDefaultCheckout(true)
@@ -47,8 +70,41 @@ pipeline {
                 '''
             }
         }
+        stage('Validate Rollback') {
+            steps {
+                script {
+
+                    if (params.ROLLBACK_SERVICE != 'NONE') {
+
+                        if (!params.ROLLBACK_SHA?.trim()) {
+                            error "ROLLBACK_SHA is required when ROLLBACK_SERVICE is selected."
+                        }
+
+                        if (!(params.ROLLBACK_SHA ==~ /^[0-9a-fA-F]{40}$/)) {
+                            error "ROLLBACK_SHA must be a full 40-character Git SHA."
+                        }
+
+                        echo "=========================================="
+                        echo "ROLLBACK REQUEST"
+                        echo "=========================================="
+                        echo "Service : ${params.ROLLBACK_SERVICE}"
+                        echo "SHA     : ${params.ROLLBACK_SHA}"
+                        echo "=========================================="
+
+                    } else {
+
+                        echo "Normal deployment mode."
+                    }
+                }
+            }
+        }
 
         stage('Detect Changed Services') {
+            when {
+                expression {
+                    return params.ROLLBACK_SERVICE == 'NONE'
+                }
+            }
             steps {
                 script {
 
@@ -199,10 +255,35 @@ pipeline {
                 }
             }
         }
+        stage('Prepare Rollback') {
+
+            when {
+                expression {
+                    return params.ROLLBACK_SERVICE != 'NONE'
+                }
+            }
+
+            steps {
+                script {
+
+                    env.CHANGED_SERVICES = params.ROLLBACK_SERVICE
+                    env.ROLLBACK_MODE = 'true'
+                    env.GIT_SHA = params.ROLLBACK_SHA
+
+                    echo "=========================================="
+                    echo "ROLLBACK PREPARED"
+                    echo "=========================================="
+                    echo "Service : ${params.ROLLBACK_SERVICE}"
+                    echo "SHA     : ${params.ROLLBACK_SHA}"
+                    echo "=========================================="
+                }
+            }
+        }
         stage('Build Services') {
             when {
                 expression {
-                    return env.CHANGED_SERVICES?.trim()
+                    return params.ROLLBACK_SERVICE == 'NONE' &&
+                           env.CHANGED_SERVICES?.trim()
                 }
             }
 
@@ -313,7 +394,8 @@ pipeline {
         stage('Build Docker Images') {
             when {
                 expression {
-                    return env.CHANGED_SERVICES?.trim()
+                    return params.ROLLBACK_SERVICE == 'NONE' &&
+                           env.CHANGED_SERVICES?.trim()
                 }
             }
 
@@ -398,7 +480,8 @@ pipeline {
         stage('Login to ECR') {
             when {
                 expression {
-                    return env.CHANGED_SERVICES?.trim()
+                    return params.ROLLBACK_SERVICE == 'NONE' &&
+                           env.CHANGED_SERVICES?.trim()
                 }
             }
 
@@ -416,7 +499,8 @@ pipeline {
         stage('Push Images to ECR') {
             when {
                 expression {
-                    return env.CHANGED_SERVICES?.trim()
+                    return params.ROLLBACK_SERVICE == 'NONE' &&
+                           env.CHANGED_SERVICES?.trim()
                 }
             }
 
@@ -558,6 +642,26 @@ pipeline {
                                 echo "ECS Service: ${ecsService}"
                                 echo "ECR Repository: citicore/${repository}"
                                 echo "Image Tag: ${GIT_SHA}"
+
+                                if (params.ROLLBACK_SERVICE != 'NONE') {
+                                    echo "MODE: ROLLBACK"
+                                } else {
+                                    echo "MODE: NORMAL DEPLOYMENT"
+                                }
+                                if [ "${params.ROLLBACK_SERVICE}" != "NONE" ]; then
+
+                                    echo "Checking rollback image exists in ECR..."
+
+                                    aws ecr describe-images \
+                                        --repository-name citicore/${repository} \
+                                        --image-ids imageTag=${GIT_SHA} \
+                                        --region ${AWS_REGION} \
+                                        --query 'imageDetails[0].imageDigest' \
+                                        --output text
+
+                                    echo "Rollback image exists in ECR."
+                                fi
+
                                 echo "=========================================="
 
                                 echo "Getting current ECS task definition..."
@@ -685,6 +789,50 @@ PY
                             """
                         }
                     }
+                }
+            }
+        }
+        stage('Record Deployment') {
+            when {
+                expression {
+                    return env.CHANGED_SERVICES?.trim()
+                }
+            }
+
+            steps {
+                script {
+                    def services = env.CHANGED_SERVICES.split(',').collect { it.trim() }
+
+                    sh '''
+                        mkdir -p deployment-history
+                    '''
+
+                    services.each { service ->
+                        sh """
+                            touch deployment-history/${service}
+
+                            if [ -s deployment-history/${service} ]; then
+                                sed -i "1i${GIT_SHA}" deployment-history/${service}
+                            else
+                                echo "${GIT_SHA}" > deployment-history/${service}
+                            fi
+
+                            head -20 deployment-history/${service} > deployment-history/${service}.tmp
+                            mv deployment-history/${service}.tmp deployment-history/${service}
+                        """
+                    }
+
+                    echo "=========================================="
+                    echo " DEPLOYMENT HISTORY"
+                    echo "=========================================="
+
+                    sh '''
+                        for file in deployment-history/*; do
+                            echo ""
+                            echo "Service: $(basename "$file")"
+                            nl -ba "$file"
+                        done
+                    '''
                 }
             }
         }
