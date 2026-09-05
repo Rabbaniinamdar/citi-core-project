@@ -380,16 +380,14 @@ pipeline {
 
                             dir(directory) {
 
-                                sh """
-                                    echo "Building Docker image for ${service}"
+                            sh """
+                                        echo "Building Docker image for ${service}"
 
-                                    docker build -t ${ECR_REGISTRY}/citicore/${repository}:${GIT_SHA} .
-
-                                    docker tag \
-                                        ${ECR_REGISTRY}/citicore/${repository}:${GIT_SHA} \
-                                        ${ECR_REGISTRY}/citicore/${repository}:latest
-                                """
-                                echo "Built ${repository}:${GIT_SHA}"
+                                        docker build \
+                                            -t ${ECR_REGISTRY}/citicore/${repository}:${GIT_SHA} \
+                                            .
+                            """
+                            echo "Built ${repository}:${GIT_SHA}"
                             }
                         }
                     }
@@ -476,7 +474,6 @@ pipeline {
 
                             sh """
                                 docker push ${ECR_REGISTRY}/citicore/${repository}:${GIT_SHA}
-                                docker push ${ECR_REGISTRY}/citicore/${repository}:latest
                             """
                             echo "Pushed ${repository}:${GIT_SHA}"
                         }
