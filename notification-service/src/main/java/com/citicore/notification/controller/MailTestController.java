@@ -37,7 +37,6 @@ public class MailTestController {
             mailSender.testConnection();
             return "SMTP CONNECTION SUCCESS";
         } catch (Exception e) {
-            e.printStackTrace();
             return "SMTP CONNECTION FAILED: " + e.getMessage();
         }
     }
