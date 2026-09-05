@@ -860,9 +860,7 @@ Check the stage above for the failure.
         always {
             sh '''
                 echo "Cleaning workspace..."
-
                 rm -f task-definition.json || true
-
                 docker logout ${ECR_REGISTRY} || true
             '''
         }
