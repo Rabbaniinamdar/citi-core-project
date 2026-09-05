@@ -63,8 +63,4 @@ public class AuthController {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
-    @GetMapping("/health")
-    public String health() {
-        return "OK";
-    }
 }
