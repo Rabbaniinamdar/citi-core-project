@@ -68,7 +68,6 @@ public class UserController {
      * PUT /api/v1/user/profile
      * Updates mutable profile fields for the authenticated user.
      * Email and authUserId cannot be changed.
-     *
      * Body: any subset of mutable fields (null fields are ignored)
      */
     @PutMapping("/profile")
