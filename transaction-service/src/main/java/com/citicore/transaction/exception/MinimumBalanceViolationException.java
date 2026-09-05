@@ -1,5 +1,4 @@
-
-package com.citicore.gateway.exception;
+package com.citicore.transaction.exception;
 
 public class MinimumBalanceViolationException extends RuntimeException {
 

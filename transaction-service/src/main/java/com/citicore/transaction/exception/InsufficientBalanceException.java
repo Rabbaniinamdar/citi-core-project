@@ -1,4 +1,4 @@
-package com.citicore.gateway.exception;
+package com.citicore.transaction.exception;
 
 public class InsufficientBalanceException extends RuntimeException {
 
