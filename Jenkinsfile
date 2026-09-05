@@ -634,6 +634,8 @@ pipeline {
 
                         stage("Deploy ${service}") {
 
+                            def rollbackMode = params.ROLLBACK_SERVICE != 'NONE'
+
                             sh """
                                 set -e
 
@@ -643,12 +645,13 @@ pipeline {
                                 echo "ECR Repository: citicore/${repository}"
                                 echo "Image Tag: ${GIT_SHA}"
 
-                                if (params.ROLLBACK_SERVICE != 'NONE') {
+                                if [ "${rollbackMode}" = "true" ]; then
                                     echo "MODE: ROLLBACK"
-                                } else {
+                                else
                                     echo "MODE: NORMAL DEPLOYMENT"
-                                }
-                                if [ "${params.ROLLBACK_SERVICE}" != "NONE" ]; then
+                                fi
+
+                                if [ "${rollbackMode}" = "true" ]; then
 
                                     echo "Checking rollback image exists in ECR..."
 
