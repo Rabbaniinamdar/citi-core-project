@@ -50,115 +50,150 @@ pipeline {
                     def changedFiles = []
 
                     /*
-                     * Jenkins Git plugin provides all files changed
-                     * in the SCM change set.
+                     * Jenkins Git changelog contains all commits associated
+                     * with this build. This is more reliable than using
+                     * HEAD^ because a single GitHub push may contain
+                     * multiple commits.
                      */
                     currentBuild.changeSets.each { changeSet ->
+
                         changeSet.items.each { entry ->
+
+                            echo "Commit detected: ${entry.commitId}"
+                            echo "Commit message: ${entry.msg}"
+
                             entry.affectedFiles.each { file ->
-                                changedFiles.add(file.path)
+                                changedFiles << file.path
                             }
                         }
                     }
 
-                    changedFiles = changedFiles.unique()
+                    changedFiles = changedFiles.unique().sort()
 
-                    echo "Changed files:"
-                    changedFiles.each {
-                        echo "  ${it}"
+                    echo "=========================================="
+                    echo "Changed Files"
+                    echo "=========================================="
+
+                    if (changedFiles.isEmpty()) {
+
+                        echo "No changed files detected."
+
+                    } else {
+
+                        changedFiles.each { file ->
+                            echo "  ${file}"
+                        }
                     }
 
+                    /*
+                     * Determine which application services need deployment.
+                     */
                     def services = []
 
-                    if (changedFiles.any { it.startsWith('account-service/') }) {
-                        services.add('account')
+                    changedFiles.each { file ->
+
+                        if (file.startsWith('account-service/')) {
+                            services << 'account'
+                        }
+
+                        if (file.startsWith('transaction-service/')) {
+                            services << 'transaction'
+                        }
+
+                        if (file.startsWith('user-service/')) {
+                            services << 'user'
+                        }
+
+                        if (file.startsWith('auth-service/')) {
+                            services << 'auth'
+                        }
+
+                        if (file.startsWith('notification-service/')) {
+                            services << 'notification'
+                        }
+
+                        if (file.startsWith('apigateway-service/')) {
+                            services << 'gateway'
+                        }
+
+                        if (file.startsWith('config-service/')) {
+                            services << 'config'
+                        }
+
+                        if (file.startsWith('eureka-server/')) {
+                            services << 'eureka'
+                        }
+
+                        /*
+                         * Shared Kafka event library.
+                         *
+                         * Any change here can affect services consuming
+                         * kafka-events.
+                         */
+                        if (file.startsWith('kafka-events/')) {
+
+                            services.addAll([
+                                'account',
+                                'transaction',
+                                'user',
+                                'auth',
+                                'notification'
+                            ])
+                        }
+
+                        /*
+                         * Root Maven configuration can affect
+                         * multiple modules.
+                         */
+                        if (file == 'pom.xml' ||
+                            file.startsWith('citicore-platform/')) {
+
+                            services.addAll([
+                                'account',
+                                'transaction',
+                                'user',
+                                'auth',
+                                'notification',
+                                'gateway',
+                                'config',
+                                'eureka'
+                            ])
+                        }
+
+                        /*
+                         * Jenkinsfile, README, documentation, etc.
+                         * intentionally do not trigger deployment.
+                         */
                     }
 
-                    if (changedFiles.any { it.startsWith('transaction-service/') }) {
-                        services.add('transaction')
-                    }
+                    services = services.unique().sort()
 
-                    if (changedFiles.any { it.startsWith('user-service/') }) {
-                        services.add('user')
-                    }
+                    echo "=========================================="
+                    echo "Services Selected For Deployment"
+                    echo "=========================================="
 
-                    if (changedFiles.any { it.startsWith('auth-service/') }) {
-                        services.add('auth')
-                    }
+                    if (services.isEmpty()) {
 
-                    if (changedFiles.any { it.startsWith('notification-service/') }) {
-                        services.add('notification')
-                    }
+                        echo "  None"
 
-                    if (changedFiles.any { it.startsWith('apigateway-service/') }) {
-                        services.add('gateway')
-                    }
+                    } else {
 
-                    if (changedFiles.any { it.startsWith('config-service/') }) {
-                        services.add('config')
-                    }
-
-                    if (changedFiles.any { it.startsWith('eureka-server/') }) {
-                        services.add('eureka')
+                        services.each { service ->
+                            echo "  ${service}"
+                        }
                     }
 
                     /*
-                     * kafka-events is shared by:
-                     *
-                     * account
-                     * transaction
-                     * user
-                     * auth
-                     * notification
-                     */
-                    if (changedFiles.any { it.startsWith('kafka-events/') }) {
-
-                        echo "Shared kafka-events changed."
-
-                        services.addAll([
-                            'account',
-                            'transaction',
-                            'user',
-                            'auth',
-                            'notification'
-                        ])
-                    }
-
-                    /*
-                     * Root pom changes affect the Maven reactor:
-                     * kafka-events, account and transaction.
-                     */
-                    if (changedFiles.any { it == 'pom.xml' }) {
-
-                        echo "Root pom.xml changed."
-
-                        services.addAll([
-                            'account',
-                            'transaction'
-                        ])
-                    }
-
-                    services = services.unique()
-
-                    /*
-                     * Jenkinsfile/README/config-repo changes alone
-                     * do not deploy an ECS application.
+                     * Store selected services for the remaining stages.
                      */
                     env.CHANGED_SERVICES = services.join(',')
 
-                    if (services.isEmpty()) {
-                        echo "No deployable service changed."
-                        echo "This build will finish without ECS deployment."
-                    } else {
-                        echo "Services selected for deployment:"
-                        services.each {
-                            echo "  ${it}"
-                        }
-                    }
+                    echo "=========================================="
+                    echo "CHANGED_SERVICES=${env.CHANGED_SERVICES}"
+                    echo "=========================================="
                 }
             }
         }
-
         stage('Build Services') {
             when {
                 expression {
