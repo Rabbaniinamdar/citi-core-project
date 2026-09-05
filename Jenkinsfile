@@ -32,13 +32,18 @@ pipeline {
             steps {
                 checkout scm
 
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Git Commit SHA: ${env.GIT_SHA}"
+                }
+
                 sh '''
-                    echo "=========================================="
-                    echo "CitiCore CI/CD"
-                    echo "=========================================="
-                    echo "Commit: $(git rev-parse HEAD)"
-                    echo "Branch: $(git branch --show-current)"
-                    echo "=========================================="
+                    echo "Current commit:"
+                    git log -1 --oneline
                 '''
             }
         }
@@ -378,14 +383,13 @@ pipeline {
                                 sh """
                                     echo "Building Docker image for ${service}"
 
-                                    docker build \
-                                      -t ${ECR_REGISTRY}/citicore/${repository}:${BUILD_NUMBER} \
-                                      .
+                                    docker build -t ${ECR_REGISTRY}/citicore/${repository}:${GIT_SHA} .
 
                                     docker tag \
-                                      ${ECR_REGISTRY}/citicore/${repository}:${BUILD_NUMBER} \
-                                      ${ECR_REGISTRY}/citicore/${repository}:latest
+                                        ${ECR_REGISTRY}/citicore/${repository}:${GIT_SHA} \
+                                        ${ECR_REGISTRY}/citicore/${repository}:latest
                                 """
+                                echo "Built ${repository}:${GIT_SHA}"
                             }
                         }
                     }
@@ -471,12 +475,10 @@ pipeline {
                         stage("Push ${service}") {
 
                             sh """
-                                docker push \
-                                  ${ECR_REGISTRY}/citicore/${repository}:${BUILD_NUMBER}
-
-                                docker push \
-                                  ${ECR_REGISTRY}/citicore/${repository}:latest
+                                docker push ${ECR_REGISTRY}/citicore/${repository}:${GIT_SHA}
+                                docker push ${ECR_REGISTRY}/citicore/${repository}:latest
                             """
+                            echo "Pushed ${repository}:${GIT_SHA}"
                         }
                     }
                 }
@@ -558,7 +560,7 @@ pipeline {
                                 echo "Deploying ${service}"
                                 echo "ECS Service: ${ecsService}"
                                 echo "ECR Repository: citicore/${repository}"
-                                echo "Image Tag: ${BUILD_NUMBER}"
+                                echo "Image Tag: ${GIT_SHA}"
                                 echo "=========================================="
 
                                 echo "Getting current ECS task definition..."
@@ -592,7 +594,7 @@ with open(path) as f:
     data = json.load(f)
 
 repository = "580655778303.dkr.ecr.ap-south-1.amazonaws.com/citicore/${repository}"
-new_image = repository + ":${BUILD_NUMBER}"
+new_image = repository + ":${GIT_SHA}"
 
 containers = data.get("containerDefinitions", [])
 
