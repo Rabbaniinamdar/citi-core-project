@@ -10,7 +10,7 @@ spring:
   # ==========================================================
 
   datasource:
-    url: jdbc:mysql://mysql:3306/citicore_transactiondb?serverTimezone=UTC
+    url: jdbc:mysql://localhost:3306/citicore_transactiondb?serverTimezone=UTC
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
@@ -20,8 +20,6 @@ spring:
   # ==========================================================
 
   kafka:
-    bootstrap-servers: kafka:9092
-
     consumer:
       group-id: transaction-group
 

@@ -14,7 +14,12 @@ public class Transaction {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, updatable = false)
+    @Column(
+            name = "txn_ref",
+            nullable = false,
+            unique = true,
+            updatable = false
+    )
     private String txnRef;
 
     private Long authUserId;

@@ -1,0 +1,32 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  cloud:
+    config:
+      server:
+        git:
+          uri: ${CONFIG_GIT_URI}
+          username: ${CONFIG_GIT_USERNAME}
+          password: ${CONFIG_GIT_TOKEN}
+          default-label: main
+          clone-on-start: true
+
+    bus:
+      enabled: true
+
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,busrefresh
+
+  endpoint:
+    health:
+      show-details: always

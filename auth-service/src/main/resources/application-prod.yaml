@@ -1,0 +1,7 @@
+spring:
+  config:
+
+    import: optional:configserver:http://citicore-config-alb-1654378622.ap-south-1.elb.amazonaws.com
+
+    activate:
+      on-profile: prod

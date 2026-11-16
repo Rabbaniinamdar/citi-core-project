@@ -5,14 +5,6 @@ spring:
   application:
     name: apigateway-service
 
-  # ==========================================================
-  # REDIS
-  # ==========================================================
-
-  data:
-    redis:
-      host: redis
-      port: 6379
 
   # ==========================================================
   # GATEWAY ROUTES
@@ -28,8 +20,7 @@ spring:
 
         - id: auth-service
 
-          uri: http://auth-service:8081
-
+          uri: lb://AUTH-SERVICE
           predicates:
             - Path=/auth/**
             - Method=GET,POST
@@ -56,10 +47,11 @@ spring:
 
         - id: user-service
 
-          uri: http://user-service:8082
+          uri: lb://USER-SERVICE
 
           predicates:
             - Path=/users/**
+            - Method=GET,POST
 
           filters:
             - RewritePath=/users/(?<segment>.*), /api/v1/users/${segment}
@@ -102,10 +94,12 @@ spring:
 
         - id: account-service
 
-          uri: http://account-service:8083
+          uri: lb://ACCOUNT-SERVICE
 
           predicates:
             - Path=/accounts/**
+            - Method=GET,POST
+
 
           filters:
             - RewritePath=/accounts/(?<segment>.*), /api/v1/accounts/${segment}
@@ -148,10 +142,11 @@ spring:
 
         - id: transaction-service
 
-          uri: http://transaction-service:8084
+          uri: lb://TRANSACTION-SERVICE
 
           predicates:
             - Path=/transaction/**
+            - Method=GET,POST
 
           filters:
             - RewritePath=/transaction/(?<segment>.*), /api/v1/transaction/${segment}
@@ -194,7 +189,7 @@ spring:
 
         - id: notification-service
 
-          uri: http://notification-service:8085
+          uri: lb://NOTIFICATION-SERVICE
 
           predicates:
             - Path=/notifications/**

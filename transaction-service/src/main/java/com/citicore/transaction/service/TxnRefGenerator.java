@@ -4,6 +4,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -18,18 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 public class TxnRefGenerator {
 
-    private final AtomicInteger sequence = new AtomicInteger(0);
-    private String lastDate = "";
-
     public synchronized String generate() {
-        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-
-        if (!today.equals(lastDate)) {
-            sequence.set(0);
-            lastDate = today;
-        }
-
-        int seq = sequence.incrementAndGet();
-        return String.format("CITI-TXN-%s-%06d", today, seq);
+        return "CITI-TXN-" + UUID.randomUUID();
     }
 }

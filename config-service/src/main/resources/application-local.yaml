@@ -1,0 +1,28 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: file:///C:/Users/nitis/OneDrive/Desktop/CitiCoreProject/config-repo-local
+
+    bus:
+      enabled: true
+
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,busrefresh
+
+  endpoint:
+    health:
+      show-details: always

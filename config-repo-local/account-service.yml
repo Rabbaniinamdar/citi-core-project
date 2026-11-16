@@ -23,7 +23,7 @@ spring:
     # ========================================================
 
     primary:
-      jdbc-url: jdbc:mysql://mysql:3306/citicore_account?serverTimezone=UTC
+      jdbc-url: jdbc:mysql://localhost:3306/citicore_account?serverTimezone=UTC
       username: ${DB_USERNAME}
       password: ${DB_PASSWORD}
       driver-class-name: com.mysql.cj.jdbc.Driver
@@ -33,7 +33,7 @@ spring:
     # ========================================================
 
     replica:
-      jdbc-url: jdbc:mysql://mysql:3306/citicore_account?serverTimezone=UTC
+      jdbc-url: jdbc:mysql://localhost:3306/citicore_account?serverTimezone=UTC
       username: ${DB_USERNAME}
       password: ${DB_PASSWORD}
       driver-class-name: com.mysql.cj.jdbc.Driver
@@ -61,23 +61,6 @@ spring:
     init:
       mode: always
       schema-locations: classpath:schema.sql
-
-  # ==========================================================
-  # REDIS
-  # ==========================================================
-
-  data:
-    redis:
-      host: redis
-      port: 6379
-      timeout: 2000ms
-
-  # ==========================================================
-  # KAFKA
-  # ==========================================================
-
-  kafka:
-    bootstrap-servers: kafka:9092
 
   # ==========================================================
   # SCHEDULING

@@ -26,8 +26,12 @@ public class TransactionController {
      */
     @PostMapping("/transfer")
     public ResponseEntity<ApiResponse<String>> transfer(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody TransactionRequest request) {
-        return ResponseEntity.ok(transactionService.transfer(request));
+
+        return ResponseEntity.ok(
+                transactionService.transfer(request, idempotencyKey)
+        );
     }
 
     /**

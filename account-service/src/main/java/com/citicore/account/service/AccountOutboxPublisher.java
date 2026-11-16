@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Account Outbox Publisher — relay from DB to Kafka.
@@ -41,33 +42,54 @@ public class AccountOutboxPublisher {
 
     public AccountOutboxPublisher(
             AccountOutboxRepository repository,
-            @Qualifier("stringKafkaTemplate") KafkaTemplate<String, String> stringKafkaTemplate) {
-        this.repository           = repository;
-        this.stringKafkaTemplate  = stringKafkaTemplate;
+            @Qualifier("stringKafkaTemplate")
+            KafkaTemplate<String, String> stringKafkaTemplate) {
+
+        this.repository = repository;
+        this.stringKafkaTemplate = stringKafkaTemplate;
     }
 
     @Scheduled(fixedDelay = 5000)
     public void publish() {
-        List<AccountOutboxEvent> events = repository.findByStatus(OutboxStatus.PENDING);
+
+        List<AccountOutboxEvent> events =
+                repository.findByStatusIn(
+                        List.of(
+                                OutboxStatus.PENDING,
+                                OutboxStatus.FAILED
+                        )
+                );
 
         for (AccountOutboxEvent event : events) {
             try {
                 stringKafkaTemplate.send(
-                        event.getTopic(),          // e.g. "debit-success-topic"
-                        event.getAccountNumber(),  // partition key
-                        event.getPayload()         // raw JSON string — no re-serialization
-                );
+                        event.getTopic(),
+                        event.getAccountNumber(),
+                        event.getPayload()
+                ).get(5, TimeUnit.SECONDS);
                 event.setStatus(OutboxStatus.SENT);
-                System.out.println("📤 [ACC OUTBOX SENT] topic=" + event.getTopic()
-                        + " | key=" + event.getAccountNumber());
+                repository.save(event);
+
+                System.out.println(
+                        "📤 [ACC OUTBOX SENT] topic="
+                                + event.getTopic()
+                                + " | key="
+                                + event.getAccountNumber()
+                );
 
             } catch (Exception e) {
-                event.setStatus(OutboxStatus.FAILED);
-                System.out.println("❌ [ACC OUTBOX FAILED] topic=" + event.getTopic()
-                        + " | error=" + e.getMessage());
-                // Kafka was likely down — stays FAILED, retried on next poll cycle
+
+                System.out.println(
+                        "❌ [ACC OUTBOX FAILED] topic="
+                                + event.getTopic()
+                                + " | error="
+                                + e.getMessage()
+                );
+
+                // Keep PENDING so the next scheduler cycle retries it
+                event.setStatus(OutboxStatus.PENDING);
+                repository.save(event);
             }
-            repository.save(event);
         }
     }
 }

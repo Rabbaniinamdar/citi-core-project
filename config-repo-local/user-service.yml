@@ -12,14 +12,12 @@ spring:
     name: user-service
 
   datasource:
-    url: jdbc:mysql://mysql:3306/citicore_userdb
+    url: jdbc:mysql://localhost:3306/citicore_userdb
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
 
   kafka:
-    bootstrap-servers: kafka:9092
-
     consumer:
       group-id: user-group
 

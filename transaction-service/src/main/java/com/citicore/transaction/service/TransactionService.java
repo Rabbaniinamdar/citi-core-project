@@ -5,6 +5,7 @@ import com.citicore.transaction.client.AccountFeignClient;
 import com.citicore.transaction.dto.*;
 import com.citicore.transaction.entity.*;
 import com.citicore.transaction.exception.DailyLimitExceededException;
+import com.citicore.transaction.repository.IdempotencyKeyRepository;
 import com.citicore.transaction.repository.OutboxRepository;
 import com.citicore.transaction.repository.TransactionRepository;
 import com.citicore.transaction.entity.AuthUser;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -33,6 +35,7 @@ public class TransactionService {
     private final TxnRefGenerator txnRefGenerator;
     private final TransactionLimitValidator transactionLimitValidator;
     private final ObjectMapper objectMapper;
+    private final IdempotencyKeyRepository idempotencyKeyRepository;
 
     public TransactionService(
             AccountFeignClient accountFeignClient,
@@ -40,13 +43,14 @@ public class TransactionService {
             OutboxRepository outboxRepository,
             TxnRefGenerator txnRefGenerator,
             TransactionLimitValidator transactionLimitValidator,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper, IdempotencyKeyRepository idempotencyKeyRepository) {
         this.accountFeignClient       = accountFeignClient;
         this.transactionRepository    = transactionRepository;
         this.outboxRepository         = outboxRepository;
         this.txnRefGenerator          = txnRefGenerator;
         this.transactionLimitValidator = transactionLimitValidator;
         this.objectMapper             = objectMapper;
+        this.idempotencyKeyRepository = idempotencyKeyRepository;
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -68,11 +72,30 @@ public class TransactionService {
      * @return ApiResponse containing the generated txnRef
      */
     @Transactional
-    public ApiResponse<String> transfer(TransactionRequest req) {
+    public ApiResponse<String> transfer(TransactionRequest req, String idempotencyKey) {
 
         // ── Step 1: Basic validation ──────────────────────────────────────────
         if (req == null || req.isInvalid()) {
             return ApiResponse.failure("Invalid transfer request", "");
+        }
+
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return ApiResponse.failure(
+                    "Idempotency-Key is required",
+                    ""
+            );
+        }
+
+        Optional<IdempotencyKey> existing =
+                idempotencyKeyRepository
+                        .findByIdempotencyKey(idempotencyKey);
+
+        if (existing.isPresent()) {
+
+            return ApiResponse.success(
+                    "Transfer already initiated",
+                    existing.get().getTxnRef()
+            );
         }
 
         // ── Step 2: Daily total for limit check ───────────────────────────────
@@ -115,6 +138,15 @@ public class TransactionService {
                 .build();
 
         transactionRepository.save(txn);
+
+        IdempotencyKey key = new IdempotencyKey();
+
+        key.setIdempotencyKey(idempotencyKey);
+        key.setTxnRef(txnRef);
+        key.setStatus("INITIATED");
+        key.setCreatedAt(LocalDateTime.now());
+
+        idempotencyKeyRepository.save(key);
 
         // Serialize event to JSON string — OutboxPublisher sends via StringSerializer
         TransactionRequestedEvent event = new TransactionRequestedEvent(

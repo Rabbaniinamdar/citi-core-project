@@ -8,5 +8,6 @@ import java.util.List;
 
 public interface AccountOutboxRepository extends JpaRepository<AccountOutboxEvent, Long> {
 
-    List<AccountOutboxEvent> findByStatus(OutboxStatus status);
+
+    List<AccountOutboxEvent> findByStatusIn(List<OutboxStatus> pending);
 }
