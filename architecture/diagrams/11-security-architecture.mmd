@@ -1,0 +1,174 @@
+%% CitiCore Security Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+flowchart TB
+    subgraph EXTERNAL ["External Threat Landscape"]
+        ATTACKER[Attackers\nBrute Force, Credential Stuffing\nInjection, XSS, CSRF]
+        MALWARE[Malware\nDocument Uploads]
+        INSIDER[Insider Threats\nPrivileged Access Abuse]
+    end
+
+    subgraph PERIMETER ["Network Perimeter"]
+        WAF[WAF / CloudFlare\nDDoS Protection\nRate Limiting\nGeo-blocking]
+        LB[Load Balancer\nTLS Termination\nSSL Offloading]
+        DNS[DNS Security\nDNSSEC, CAA Records]
+    end
+
+    subgraph EDGE_SECURITY ["API Gateway Security"]
+        GW_AUTH[JWT Validation\nSignature, Expiry, Claims]
+        GW_RATE[Rate Limiting\nRedis Token Bucket\nIP-based: 100 req/min\nUser-based: 1000 req/min]
+        GW_CORS[CORS Policy\nAllowed Origins Only\nCredentials: true]
+        GW_HEADERS[Security Headers\nHSTS, X-Frame-Options\nCSP, X-Content-Type-Options]
+        GW_CB[Circuit Breakers\nResilience4j\nFail-fast on Downstream]
+    end
+
+    subgraph AUTHENTICATION ["Authentication Layer"]
+        AUTH_SVC[Auth Service\nPort 8081]
+        JWT_ACCESS[Access Token\nJWT HS256, 15 min\nClaims: userId, email, roles]
+        JWT_REFRESH[Refresh Token\nOpaque UUID, 7 days\nStored in DB, Rotated]
+        BCRYPT[BCrypt Hashing\nCost Factor 10]
+        MFA[TOTP MFA (Planned)\nRFC 6238 + Backup Codes]
+        LOCKOUT[Account Lockout (Planned)\n5 Failed → 15 min Lock]
+        RATE_AUTH[Auth Rate Limiting (Planned)\n5 req/min login\n3 req/5min register]
+        PWD_RESET[Password Reset (Planned)\nSecure Token, 15 min, Single-Use]
+        PWD_POLICY[Password Policy (Planned)\n12+ chars, Complexity]
+    end
+
+    subgraph AUTHORIZATION ["Authorization Layer"]
+        RBAC[Role-Based Access Control\nCUSTOMER, ADMIN, SUPPORT\nAUDITOR, SERVICE]
+        ABAC[Attribute-Based (Planned)\nOwnership, KYC Status\nRisk Score, Device Trust]
+        PRE_AUTH[@PreAuthorize Annotations\nMethod-Level Security]
+        OWNERSHIP[Ownership Checks\nresource.ownerId == currentUserId]
+        SERVICE_ROLE[Service Role\nFeign-Only Endpoints\nROLE_SERVICE]
+        KYC_GATE[KYC Gate\nAccount Creation Requires\nKYC_APPROVED]
+    end
+
+    subgraph SERVICE_SECURITY ["Service-to-Service Security"]
+        JWT_PROPAGATION[JWT Propagation\nGateway → Services\nHeaders: X-User-Id, Roles, Email]
+        FEIGN_INTERCEPTOR[Feign Interceptor\nAdds Authorization Header\nService Token or User JWT]
+        INDEPENDENT_VALIDATION[Independent Validation\nEach Service Validates JWT\nOwn JwtUtils, No Shared Secret]
+        MTLS[Mutual TLS (Planned)\nService Mesh / mTLS\nCertificate Rotation]
+    end
+
+    subgraph DATA_PROTECTION ["Data Protection"]
+        TLS_TRANSIT[TLS 1.2+ In Transit\nAll Service Communication\nDatabase, Kafka, Redis]
+        ENCRYPTION_AT_REST[Encryption at Rest (Planned)\nMySQL TDE\nColumn-Level for PII\nS3 SSE-KMS for KYC]
+        PII_MASKING[PII Masking in Logs\nAccount Numbers, Emails\nStructured JSON Logging]
+        SECRETS[Secrets Management (Planned)\nHashiCorp Vault\nDynamic DB Credentials\nJWT Secret Rotation]
+        KEY_MGMT[Key Management\nHSM / Cloud KMS\nRotation Policies]
+    end
+
+    subgraph APPLICATION_SECURITY ["Application Security"]
+        INPUT_VALIDATION[Input Validation\nBean Validation\n@Positive, @Max, @Pattern\n@DecimalMin, @Digits]
+        OUTPUT_ENCODING[Output Encoding\nPrevent XSS\nContent Security Policy]
+        SQL_INJECTION[SQL Injection Prevention\nJPA Parameter Binding\nNo Raw SQL]
+        ERROR_HANDLING[Error Handling\nGeneric Client Messages\nDetailed Server Logs Only]
+        AUDIT_LOGGING[Audit Logging (Planned)\nImmutable Trail\nFinancial Events\nAdmin Actions]
+    end
+
+    subgraph CONTAINER_SECURITY ["Container & Runtime Security"]
+        NON_ROOT[Non-Root User\nUID 1000, GID 1000\nNo Root Processes]
+        READ_ONLY_FS[Read-Only Root FS\nNo Writable Paths\nEmptyDir for Temp]
+        CAP_DROP[Drop Capabilities\nALL dropped\nOnly NET_BIND_SERVICE if needed]
+        IMAGE_SCAN[Image Scanning\nTrivy in CI/CD\nNo Critical/High CVEs]
+        BASE_IMAGES[Minimal Base Images\nDistroless / Alpine\nRegular Updates]
+    end
+
+    subgraph INFRASTRUCTURE_SECURITY ["Infrastructure Security"]
+        NETWORK_POLICIES[K8s NetworkPolicies\nZero-Trust\nDefault Deny All\nExplicit Allow Rules]
+        SECRETS_K8S[K8s Secrets\nExternal Secrets Operator\nVault Integration]
+        RBAC_K8S[K8s RBAC\nLeast Privilege\nService Accounts per App]
+        AUDIT_K8S[K8s Audit Logs\nAPI Server Auditing\nFalco Runtime Security]
+    end
+
+    subgraph MONITORING_SECURITY ["Security Monitoring"]
+        SIEM[SIEM Integration\nLog Aggregation\nCorrelation Rules]
+        ANOMALY[Anomaly Detection\nFailed Login Spikes\nUnusual Transfer Patterns\nGeo-velocity]
+        VULN_SCAN[Vulnerability Scanning\nSAST: CodeQL, SpotBugs\nSCA: Dependency Check\nDAST: OWASP ZAP]
+        PEN_TEST[Penetration Testing\nAnnual + After Major Changes\nAuth, API, Infrastructure]
+        INCIDENT_RESPONSE[Incident Response\nRunbooks\nPlaybooks\nForensics Ready]
+
+    %% Connections
+    ATTACKER --> WAF
+    MALWARE --> WAF
+    INSIDER --> NETWORK_POLICIES
+
+    WAF --> LB
+    LB --> DNS
+    LB --> GW_AUTH
+
+    GW_AUTH --> GW_RATE
+    GW_RATE --> GW_CORS
+    GW_CORS --> GW_HEADERS
+    GW_HEADERS --> GW_CB
+
+    GW_AUTH --> AUTH_SVC
+    AUTH_SVC --> JWT_ACCESS
+    AUTH_SVC --> JWT_REFRESH
+    AUTH_SVC --> BCRYPT
+    AUTH_SVC --> MFA
+    AUTH_SVC --> LOCKOUT
+    AUTH_SVC --> RATE_AUTH
+    AUTH_SVC --> PWD_RESET
+    AUTH_SVC --> PWD_POLICY
+
+    JWT_ACCESS --> RBAC
+    RBAC --> ABAC
+    ABAC --> PRE_AUTH
+    PRE_AUTH --> OWNERSHIP
+    OWNERSHIP --> SERVICE_ROLE
+    SERVICE_ROLE --> KYC_GATE
+
+    JWT_ACCESS --> JWT_PROPAGATION
+    JWT_PROPAGATION --> FEIGN_INTERCEPTOR
+    FEIGN_INTERCEPTOR --> INDEPENDENT_VALIDATION
+    INDEPENDENT_VALIDATION --> MTLS
+
+    TLS_TRANSIT --> ENCRYPTION_AT_REST
+    ENCRYPTION_AT_REST --> PII_MASKING
+    PII_MASKING --> SECRETS
+    SECRETS --> KEY_MGMT
+
+    INPUT_VALIDATION --> OUTPUT_ENCODING
+    OUTPUT_ENCODING --> SQL_INJECTION
+    SQL_INJECTION --> ERROR_HANDLING
+    ERROR_HANDLING --> AUDIT_LOGGING
+
+    NON_ROOT --> READ_ONLY_FS
+    READ_ONLY_FS --> CAP_DROP
+    CAP_DROP --> IMAGE_SCAN
+    IMAGE_SCAN --> BASE_IMAGES
+
+    NETWORK_POLICIES --> SECRETS_K8S
+    SECRETS_K8S --> RBAC_K8S
+    RBAC_K8S --> AUDIT_K8S
+
+    SIEM --> ANOMALY
+    ANOMALY --> VULN_SCAN
+    VULN_SCAN --> PEN_TEST
+    PEN_TEST --> INCIDENT_RESPONSE
+
+    classDef external fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    classDef perimeter fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef edge fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef auth fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef authz fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+    classDef svc fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef data fill:#fff7ed,stroke:#ea580c,stroke-width:2px;
+    classDef app fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+    classDef container fill:#f3f4f6,stroke:#6b7280,stroke-width:2px;
+    classDef infra fill:#fafafa,stroke:#9ca3af,stroke-width:2px;
+    classDef monitor fill:#fdf4ff,stroke:#a855f7,stroke-width:2px;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+
+    class EXTERNAL,ATTACKER,MALWARE,INSIDER external;
+    class PERIMETER,WAF,LB,DNS perimeter;
+    class EDGE_SECURITY,GW_AUTH,GW_RATE,GW_CORS,GW_HEADERS,GW_CB edge;
+    class AUTHENTICATION,AUTH_SVC,JWT_ACCESS,JWT_REFRESH,BCRYPT,MFA,LOCKOUT,RATE_AUTH,PWD_RESET,PWD_POLICY auth;
+    class AUTHORIZATION,RBAC,ABAC,PRE_AUTH,OWNERSHIP,SERVICE_ROLE,KYC_GATE authz;
+    class SERVICE_SECURITY,JWT_PROPAGATION,FEIGN_INTERCEPTOR,INDEPENDENT_VALIDATION,MTLS svc;
+    class DATA_PROTECTION,TLS_TRANSIT,ENCRYPTION_AT_REST,PII_MASKING,SECRETS,KEY_MGMT data;
+    class APPLICATION_SECURITY,INPUT_VALIDATION,OUTPUT_ENCODING,SQL_INJECTION,ERROR_HANDLING,AUDIT_LOGGING app;
+    class CONTAINER_SECURITY,NON_ROOT,READ_ONLY_FS,CAP_DROP,IMAGE_SCAN,BASE_IMAGES container;
+    class INFRASTRUCTURE_SECURITY,NETWORK_POLICIES,SECRETS_K8S,RBAC_K8S,AUDIT_K8S infra;
+    class MONITORING_SECURITY,SIEM,ANOMALY,VULN_SCAN,PEN_TEST,INCIDENT_RESPONSE monitor;
+    class MFA,LOCKOUT,RATE_AUTH,PWD_RESET,PWD_POLICY,ABAC,MTLS,ENCRYPTION_AT_REST,SECRETS,KEY_MGMT,AUDIT_LOGGING planned;

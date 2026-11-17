@@ -1,0 +1,150 @@
+%% CitiCore Complete Microservices Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+graph TB
+    subgraph AUTH_SVC ["Auth Service (Port 8081)"]
+        direction TB
+        AUTH_API[REST API\n/api/v1/auth/*]
+        AUTH_SVC_IMPL[AuthService\nRegistration, Login, Tokens]
+        AUTH_SEC[Security\nBCrypt, JWT HS256]
+        AUTH_ENTITIES[Entities\nUser, Role, RefreshToken]
+        AUTH_DB[(citicore_authdb)]
+        AUTH_KAFKA[Kafka Producer\notp-verification-topic]
+    end
+
+    subgraph USER_SVC ["User Service (Port 8082)"]
+        direction TB
+        USER_API[REST API\n/api/v1/users/*]
+        USER_PROFILE[ProfileService\nCRUD Profile]
+        USER_KYC[KycService\nUpload, Review, Status]
+        USER_S3[S3 Integration\nDocument Storage]
+        USER_OCR[OCR Integration\nGoogle Vision]
+        USER_FEIGN[Feign Client\ngetKycStatus]
+        USER_ENTITIES[Entities\nUserProfile, KycDocument]
+        USER_DB[(citicore_userdb)]
+        USER_KAFKA[Kafka Producer\nkyc-topic]
+    end
+
+    subgraph ACCOUNT_SVC ["Account Service (Port 8083)"]
+        direction TB
+        ACC_API[REST API\n/api/v1/accounts/*]
+        ACC_SERVICE[AccountService\nCRUD, Deposit, Withdraw\nBalance, Statements]
+        ACC_VALIDATE[TransferValidation\nPre-flight Check]
+        ACC_HOLDS[Auth Holds\nAvailable Balance]
+        ACC_INTEREST[Interest Engine\nDaily Accrual]
+        ACC_PDF[PDF Statements\niText/Flying Saucer]
+        ACC_LEDGER[Ledger Posting\nJournal Entries]
+        ACC_OUTBOX[Outbox Publisher\n5s Polling]
+        ACC_CONSUMERS[Kafka Consumers\nDebit, Credit, Reversal]
+        ACC_FEIGN[Feign Client\nUserClient: KYC Check]
+        ACC_ENTITIES[Entities\nAccount, AccountStatement\nAccountOutboxEvent, Sequence]
+        ACC_DB_PRIMARY[(Primary DB\nWrites)]
+        ACC_DB_REPLICA[(Replica DB\nReads)]
+        ACC_REDIS[(Redis Cache\nBalance 5min TTL)]
+        ACC_KAFKA[Kafka Producer/Consumer\n6 Topics]
+    end
+
+    subgraph TRANSACTION_SVC ["Transaction Service (Port 8084)"]
+        direction TB
+        TXN_API[REST API\n/api/v1/transactions/*]
+        TXN_SERVICE[TransactionService\nInitiation, Limits, Idempotency]
+        TXN_SAGA[Saga Orchestrator\nChoreography-Based]
+        TXN_FEIGN[Feign Client\nAccountFeignClient]
+        TXN_CONSUMERS[Kafka Consumers\nCredit Success, Failure, Reversal]
+        TXN_OUTBOX[Outbox Publisher\nSaga Initiation]
+        TXN_ENTITIES[Entities\nTransaction, OutboxEvent\nIdempotencyKey]
+        TXN_DB[(citicore_transactiondb)]
+        TXN_KAFKA[Kafka Producer/Consumer\n4 Topics]
+    end
+
+    subgraph NOTIFICATION_SVC ["Notification Service (Port 8085)"]
+        direction TB
+        NOTIF_SERVICE[NotificationService\nEmail Delivery]
+        NOTIF_TEMPLATES[HTML Templates\nTransaction, KYC, OTP]
+        NOTIF_PROVIDERS[Providers\nSMTP, SendGrid]
+        NOTIF_CONSUMERS[Kafka Consumers\n5 Topics]
+        NOTIF_KAFKA[Kafka Consumer Only]
+    end
+
+    subgraph LEDGER_SVC ["Ledger Service (Port 8086) - PLANNED"]
+        direction TB
+        LEDGER_API[REST API\n/api/v1/ledger/*]
+        LEDGER_COA[Chart of Accounts\nAsset/Liab/Equity/Inc/Exp]
+        LEDGER_JOURNAL[JournalService\nBalanced Posting]
+        LEDGER_TRIAL[Trial Balance\nGeneration]
+        LEDGER_RECON[GL Reconciliation\nSub-ledger to GL]
+        LEDGER_AUDIT[Audit Trail\nImmutable]
+        LEDGER_FEIGN[Feign Clients\nAccount, Transaction]
+        LEDGER_ENTITIES[Entities\nLedgerAccount, JournalEntry\nJournalLine, LedgerBalance]
+        LEDGER_DB[(citicore_ledgerdb)]
+        LEDGER_KAFKA[Kafka Producer/Consumer]
+    end
+
+    subgraph PLATFORM_SVCS ["Platform Services"]
+        GW[API Gateway<br/>Port 8080<br/>Routing, Auth, Rate Limit<br/>Circuit Breaker]
+        EUREKA[Eureka Server<br/>Port 8761<br/>Service Registry]
+        CONFIG[Config Server<br/>Port 8888<br/>Native Profile + Bus]
+    end
+
+    subgraph DATA_LAYER ["Data & Messaging"]
+        MYSQL[(MySQL 8.0<br/>5 Databases)]
+        REDIS[(Redis 7<br/>Cache & Rate Limit)]
+        KAFKA[Kafka 3.8<br/>Event Bus]
+        S3[(AWS S3<br/>KYC Documents)]
+    end
+
+    %% Connections
+    GW --> AUTH_SVC
+    GW --> USER_SVC
+    GW --> ACCOUNT_SVC
+    GW --> TRANSACTION_SVC
+    GW --> NOTIFICATION_SVC
+    GW -.-> LEDGER_SVC
+
+    AUTH_SVC --> AUTH_DB
+    AUTH_SVC --> AUTH_KAFKA
+    AUTH_SVC --> REDIS
+
+    USER_SVC --> USER_DB
+    USER_SVC --> USER_KAFKA
+    USER_SVC --> S3
+    USER_SVC --> USER_FEIGN
+
+    ACCOUNT_SVC --> ACC_DB_PRIMARY
+    ACCOUNT_SVC --> ACC_DB_REPLICA
+    ACCOUNT_SVC --> ACC_REDIS
+    ACCOUNT_SVC --> ACC_KAFKA
+    ACCOUNT_SVC --> ACC_FEIGN
+    ACCOUNT_SVC -.-> LEDGER_SVC
+
+    TRANSACTION_SVC --> TXN_DB
+    TRANSACTION_SVC --> TXN_KAFKA
+    TRANSACTION_SVC --> TXN_FEIGN
+    TRANSACTION_SVC -.-> LEDGER_SVC
+
+    NOTIFICATION_SVC --> NOTIF_KAFKA
+    NOTIFICATION_SVC --> NOTIF_PROVIDERS
+
+    LEDGER_SVC -.-> LEDGER_DB
+    LEDGER_SVC -.-> LEDGER_KAFKA
+    LEDGER_SVC -.-> LEDGER_FEIGN
+
+    EUREKA --> KAFKA
+    CONFIG --> KAFKA
+
+    classDef auth fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+    classDef user fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef acc fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef txn fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef notif fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef ledger fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+    classDef platform fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+    classDef data fill:#fff7ed,stroke:#ea580c,stroke-width:2px;
+
+    class AUTH_SVC,AUTH_API,AUTH_SVC_IMPL,AUTH_SEC,AUTH_ENTITIES,AUTH_DB,AUTH_KAFKA auth;
+    class USER_SVC,USER_API,USER_PROFILE,USER_KYC,USER_S3,USER_OCR,USER_FEIGN,USER_ENTITIES,USER_DB,USER_KAFKA user;
+    class ACCOUNT_SVC,ACC_API,ACC_SERVICE,ACC_VALIDATE,ACC_HOLDS,ACC_INTEREST,ACC_PDF,ACC_LEDGER,ACC_OUTBOX,ACC_CONSUMERS,ACC_FEIGN,ACC_ENTITIES,ACC_DB_PRIMARY,ACC_DB_REPLICA,ACC_REDIS,ACC_KAFKA acc;
+    class TRANSACTION_SVC,TXN_API,TXN_SERVICE,TXN_SAGA,TXN_FEIGN,TXN_CONSUMERS,TXN_OUTBOX,TXN_ENTITIES,TXN_DB,TXN_KAFKA txn;
+    class NOTIFICATION_SVC,NOTIF_SERVICE,NOTIF_TEMPLATES,NOTIF_PROVIDERS,NOTIF_CONSUMERS,NOTIF_KAFKA notif;
+    class LEDGER_SVC,LEDGER_API,LEDGER_COA,LEDGER_JOURNAL,LEDGER_TRIAL,LEDGER_RECON,LEDGER_AUDIT,LEDGER_FEIGN,LEDGER_ENTITIES,LEDGER_DB,LEDGER_KAFKA ledger;
+    class GW,EUREKA,CONFIG platform;
+    class MYSQL,REDIS,KAFKA,S3 data;

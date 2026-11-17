@@ -1,0 +1,148 @@
+%% CitiCore Fund Transfer Workflow (Saga Choreography)
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+flowchart TD
+    START([Customer Initiates Transfer\nPOST /api/v1/transactions/transfer]) --> GW
+
+    subgraph INITIATION ["1. Transfer Initiation (Transaction Service)"]
+        GW[API Gateway\nJWT Validation + Rate Limit] --> TXN_SVC[Transaction Service]
+        TXN_SVC --> VALIDATE_REQ{Valid Request?\nAmount > 0, Accounts != Same}
+        VALIDATE_REQ -->|No| ERR_VALID[Return 400: Validation Error]
+        VALIDATE_REQ -->|Yes| CHECK_IDEMP{Idempotency Key\nExists for User?}
+        CHECK_IDEMP -->|Yes| RET_EXISTING[Return Existing txnRef\n200 OK]
+        CHECK_IDEMP -->|No| CHECK_DAILY_LIMIT{Daily Limit OK?\nPer User, Per Type}
+        CHECK_DAILY_LIMIT -->|No| ERR_LIMIT[Return 400: Daily Limit Exceeded]
+        CHECK_DAILY_LIMIT -->|Yes| FEIGN_VALIDATE[Feign: AccountService.validateTransfer\n{fromAccount, amount}]
+        FEIGN_VALIDATE --> ACC_VALIDATE[Account Service: Validate]
+        ACC_VALIDATE --> CHECK_SENDER_EXISTS{Sender Account Exists?}
+        CHECK_SENDER_EXISTS -->|No| ERR_SENDER_NF[Return 404: Sender Not Found]
+        CHECK_SENDER_EXISTS -->|Yes| CHECK_SENDER_ACTIVE{Sender ACTIVE?}
+        CHECK_SENDER_ACTIVE -->|No| ERR_SENDER_IA[Return 400: Sender Inactive]
+        CHECK_SENDER_ACTIVE -->|Yes| CHECK_BALANCE{balance >= amount + minBal?}
+        CHECK_BALANCE -->|No| ERR_INSUFF[Return 400: Insufficient Balance]
+        CHECK_BALANCE -->|Yes| VALIDATE_OK[Return Valid]
+        VALIDATE_OK --> SAVE_TXN[ATOMIC: INSERT Transaction(INITIATED)\n+ INSERT OutboxEvent(transfer-requested)]
+        SAVE_TXN --> SAVE_IDEMP[INSERT IdempotencyKey\n(user_id, key, txnRef) UNIQUE]
+        SAVE_IDEMP --> RET_202[Return 202 Accepted\n{txnRef, status: INITIATED}]
+        RET_202 --> OUTBOX_PUB_TXN[OutboxPublisher: 5s Poll\n→ transfer-requested-topic]
+    end
+
+    subgraph DEBIT_PHASE ["2. Debit Sender (Account Service - DebitConsumer)"]
+        OUTBOX_PUB_TXN --> KAFKA_REQ[(Kafka: transfer-requested-topic)]
+        KAFKA_REQ --> DEBIT_CONS[DebitConsumer\nConsumes transfer-requested]
+        DEBIT_CONS --> LOCK_SENDER[SELECT ... FOR UPDATE\nSender Account Row Lock]
+        LOCK_SENDER --> RECHECK_SENDER{Account Still Valid?\nACTIVE, Sufficient Balance}
+        RECHECK_SENDER -->|No| DEBIT_FAIL[Create DebitFailedEvent\nINSERT OutboxEvent(debit-failed)]
+        RECHECK_SENDER -->|Yes| DEBIT_CALC[newBalance = balance - amount]
+        DEBIT_CALC --> DEBIT_UPDATE[UPDATE accounts\nSET balance = newBalance]
+        DEBIT_UPDATE --> STMT_DEBIT[INSERT AccountStatement\n{DEBIT, amount, newBalance, txnRef}]
+        STMT_DEBIT --> OUTBOX_DEBIT_OK[INSERT OutboxEvent\ndebit-success-topic]
+        OUTBOX_DEBIT_OK --> COMMIT_DEBIT[COMMIT Transaction]
+        COMMIT_DEBIT --> OUTBOX_PUB_DEBIT[OutboxPublisher → debit-success-topic]
+    end
+
+    subgraph CREDIT_PHASE ["3. Credit Receiver (Account Service - CreditConsumer)"]
+        OUTBOX_PUB_DEBIT --> KAFKA_DEBIT_OK[(Kafka: debit-success-topic)]
+        KAFKA_DEBIT_OK --> CREDIT_CONS[CreditConsumer\nConsumes debit-success]
+        CREDIT_CONS --> LOCK_RECEIVER[SELECT ... FOR UPDATE\nReceiver Account Row Lock]
+        LOCK_RECEIVER --> RECHECK_RECEIVER{Receiver ACTIVE?\nNot CLOSED}
+        RECHECK_RECEIVER -->|No| CREDIT_FAIL[Create CreditFailedEvent\nINSERT OutboxEvent(credit-failed)]
+        RECHECK_RECEIVER -->|Yes| CREDIT_CALC[newBalance = balance + amount]
+        CREDIT_CALC --> CREDIT_UPDATE[UPDATE accounts\nSET balance = newBalance]
+        CREDIT_UPDATE --> STMT_CREDIT[INSERT AccountStatement\n{CREDIT, amount, newBalance, txnRef}]
+        STMT_CREDIT --> OUTBOX_CREDIT_OK[INSERT OutboxEvent\ncredit-success-topic]
+        OUTBOX_CREDIT_OK --> COMMIT_CREDIT[COMMIT Transaction]
+        COMMIT_CREDIT --> OUTBOX_PUB_CREDIT[OutboxPublisher → credit-success-topic]
+    end
+
+    subgraph COMPLETION ["4. Transaction Completion (Transaction Service)"]
+        OUTBOX_PUB_CREDIT --> KAFKA_CREDIT_OK[(Kafka: credit-success-topic)]
+        KAFKA_CREDIT_OK --> TXN_EVENT_CONS[TransactionEventConsumer\nConsumes credit-success]
+        TXN_EVENT_CONS --> UPDATE_TXN_SUCCESS[UPDATE transactions\nSET status=CREDIT_SUCCESS]
+        UPDATE_TXN_SUCCESS --> NOTIF_SUCCESS[Kafka → Notification Service\ncredit-success-topic]
+        NOTIF_SUCCESS --> EMAIL_SUCCESS[Send Success Email\nTo Sender & Receiver]
+        EMAIL_SUCCESS --> LEDGER_TXN[Ledger: Post Journal Entry]
+        LEDGER_TXN --> LEDGER_DB[(citicore_ledgerdb)]
+        LEDGER_TXN --> JOURNAL_TXN[Journal Entry:\nDebit: 2000-{fromAcc}-Customer Deposits\nCredit: 2000-{toAcc}-Customer Deposits]
+        JOURNAL_TXN --> END_SUCCESS([Transfer Complete\nCREDIT_SUCCESS])
+    end
+
+    subgraph DEBIT_FAILURE ["Debit Failure Path"]
+        DEBIT_FAIL --> OUTBOX_PUB_DEBIT_FAIL[OutboxPublisher → debit-failed-topic]
+        OUTBOX_PUB_DEBIT_FAIL --> KAFKA_DEBIT_FAIL[(Kafka: debit-failed-topic)]
+        KAFKA_DEBIT_FAIL --> TXN_FAIL_CONS[TransactionFailureConsumer\nConsumes debit-failed]
+        TXN_FAIL_CONS --> UPDATE_TXN_DEBIT_FAIL[UPDATE transactions\nSET status=FAILED]
+        UPDATE_TXN_DEBIT_FAIL --> NOTIF_DEBIT_FAIL[Kafka → Notification Service\ndebit-failed-topic]
+        NOTIF_DEBIT_FAIL --> EMAIL_DEBIT_FAIL[Send Failure Email\nTo Sender]
+        EMAIL_DEBIT_FAIL --> END_DEBIT_FAIL([Transfer Failed\nFAILED at Debit])
+    end
+
+    subgraph CREDIT_FAILURE ["Credit Failure Path"]
+        CREDIT_FAIL --> OUTBOX_PUB_CREDIT_FAIL[OutboxPublisher → credit-failed-topic]
+        OUTBOX_PUB_CREDIT_FAIL --> KAFKA_CREDIT_FAIL[(Kafka: credit-failed-topic)]
+        KAFKA_CREDIT_FAIL --> TXN_CREDIT_FAIL_CONS[TransactionFailureConsumer\nConsumes credit-failed]
+        TXN_CREDIT_FAIL_CONS --> UPDATE_TXN_CREDIT_FAIL[UPDATE transactions\nSET status=FAILED]
+        UPDATE_TXN_CREDIT_FAIL --> OUTBOX_REVERSAL[INSERT OutboxEvent\nreversal-topic]
+        OUTBOX_REVERSAL --> OUTBOX_PUB_REVERSAL[OutboxPublisher → reversal-topic]
+        NOTIF_CREDIT_FAIL[Kafka → Notification Service\ncredit-failed-topic] --> EMAIL_CREDIT_FAIL[Send Failure Email\nTo Both Parties]
+    end
+
+    subgraph REVERSAL ["5. Reversal/Compensation (Account Service - ReversalConsumer)"]
+        OUTBOX_PUB_REVERSAL --> KAFKA_REVERSAL[(Kafka: reversal-topic)]
+        KAFKA_REVERSAL --> REVERSAL_CONS[ReversalConsumer\nConsumes reversal-topic]
+        REVERSAL_CONS --> LOCK_SENDER_REV[SELECT ... FOR UPDATE\nSender Account Row Lock]
+        LOCK_SENDER_REV --> REFUND_CALC[refundBalance = balance + amount]
+        REFUND_CALC --> REFUND_UPDATE[UPDATE accounts\nSET balance = refundBalance]
+        REFUND_UPDATE --> STMT_REV[INSERT AccountStatement\n{CREDIT, amount, refundBalance,\ntxnRef + '_REVERSAL'}]
+        STMT_REV --> OUTBOX_REV_OK[INSERT OutboxEvent\nreversal-success-topic]
+        OUTBOX_REV_OK --> COMMIT_REV[COMMIT Transaction]
+        COMMIT_REV --> OUTBOX_PUB_REV_OK[OutboxPublisher → reversal-success-topic]
+    end
+
+    subgraph REVERSAL_COMPLETION ["6. Reversal Completion"]
+        OUTBOX_PUB_REV_OK --> KAFKA_REV_OK[(Kafka: reversal-success-topic)]
+        KAFKA_REV_OK --> TXN_REV_CONS[TransactionEventConsumer\nConsumes reversal-success]
+        TXN_REV_CONS --> UPDATE_TXN_REV[UPDATE transactions\nSET status=REVERSED]
+        UPDATE_TXN_REV --> NOTIF_REV[Kafka → Notification Service\nreversal-success-topic]
+        NOTIF_REV --> EMAIL_REV[Send Reversal Email\nRefund Confirmed]
+        EMAIL_REV --> LEDGER_REV[Ledger: Reversal Journal Entry]
+        LEDGER_REV --> LEDGER_DB
+        LEDGER_REV --> JOURNAL_REV[Reversal Journal Entry:\nDebit: 2000-{toAcc}-Customer Deposits\nCredit: 2000-{fromAcc}-Customer Deposits]
+        JOURNAL_REV --> END_REV([Transfer Reversed\nREVERSED])
+    end
+
+    %% Error handling
+    ERR_VALID --> END_FAIL([Transfer Failed])
+    RET_EXISTING --> END_SUCCESS
+    ERR_LIMIT --> END_FAIL
+    ERR_SENDER_NF --> END_FAIL
+    ERR_SENDER_IA --> END_FAIL
+    ERR_INSUFF --> END_FAIL
+
+    classDef initiation fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef debit fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef credit fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef completion fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+    classDef failure fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    classDef reversal fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef reversal_comp fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef kafka fill:#fff7ed,stroke:#ea580c,stroke-width:2px;
+    classDef db fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef ledger fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+    classDef decision fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef error fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    classDef success fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+
+    class GW,TXN_SVC,VALIDATE_REQ,CHECK_IDEMP,CHECK_DAILY_LIMIT,FEIGN_VALIDATE,ACC_VALIDATE,CHECK_SENDER_EXISTS,CHECK_SENDER_ACTIVE,CHECK_BALANCE,VALIDATE_OK,SAVE_TXN,SAVE_IDEMP,RET_202,OUTBOX_PUB_TXN initiation;
+    class KAFKA_REQ,DEBIT_CONS,LOCK_SENDER,RECHECK_SENDER,DEBIT_CALC,DEBIT_UPDATE,STMT_DEBIT,OUTBOX_DEBIT_OK,COMMIT_DEBIT,OUTBOX_PUB_DEBIT debit;
+    class KAFKA_DEBIT_OK,CREDIT_CONS,LOCK_RECEIVER,RECHECK_RECEIVER,CREDIT_CALC,CREDIT_UPDATE,STMT_CREDIT,OUTBOX_CREDIT_OK,COMMIT_CREDIT,OUTBOX_PUB_CREDIT credit;
+    class KAFKA_CREDIT_OK,TXN_EVENT_CONS,UPDATE_TXN_SUCCESS,NOTIF_SUCCESS,EMAIL_SUCCESS,LEDGER_TXN,JOURNAL_TXN completion;
+    class DEBIT_FAIL,OUTBOX_PUB_DEBIT_FAIL,KAFKA_DEBIT_FAIL,TXN_FAIL_CONS,UPDATE_TXN_DEBIT_FAIL,NOTIF_DEBIT_FAIL,EMAIL_DEBIT_FAIL failure;
+    class CREDIT_FAIL,OUTBOX_PUB_CREDIT_FAIL,KAFKA_CREDIT_FAIL,TXN_CREDIT_FAIL_CONS,UPDATE_TXN_CREDIT_FAIL,OUTBOX_REVERSAL,OUTBOX_PUB_REVERSAL,NOTIF_CREDIT_FAIL,EMAIL_CREDIT_FAIL failure;
+    class KAFKA_REVERSAL,REVERSAL_CONS,LOCK_SENDER_REV,REFUND_CALC,REFUND_UPDATE,STMT_REV,OUTBOX_REV_OK,COMMIT_REV,OUTBOX_PUB_REV_OK reversal_comp;
+    class KAFKA_REV_OK,TXN_REV_CONS,UPDATE_TXN_REV,NOTIF_REV,EMAIL_REV,LEDGER_REV,JOURNAL_REV reversal;
+    class KAFKA_REQ,KAFKA_DEBIT_OK,KAFKA_CREDIT_OK,KAFKA_DEBIT_FAIL,KAFKA_CREDIT_FAIL,KAFKA_REVERSAL,KAFKA_REV_OK kafka;
+    class SAVE_TXN,SAVE_IDEMP,LOCK_SENDER,DEBIT_UPDATE,STMT_DEBIT,OUTBOX_DEBIT_OK,COMMIT_DEBIT,LOCK_RECEIVER,CREDIT_UPDATE,STMT_CREDIT,OUTBOX_CREDIT_OK,COMMIT_CREDIT,UPDATE_TXN_SUCCESS,LOCK_SENDER_REV,REFUND_UPDATE,STMT_REV,OUTBOX_REV_OK,COMMIT_REV,UPDATE_TXN_REV,UPDATE_TXN_DEBIT_FAIL,UPDATE_TXN_CREDIT_FAIL db;
+    class LEDGER_TXN,JOURNAL_TXN,LEDGER_REV,JOURNAL_REV,LEDGER_DB ledger;
+    class VALIDATE_REQ,CHECK_IDEMP,CHECK_DAILY_LIMIT,CHECK_SENDER_EXISTS,CHECK_SENDER_ACTIVE,CHECK_BALANCE,RECHECK_SENDER,RECHECK_RECEIVER decision;
+    class ERR_VALID,ERR_LIMIT,ERR_SENDER_NF,ERR_SENDER_IA,ERR_INSUFF,DEBIT_FAIL,CREDIT_FAIL error;
+    class RET_EXISTING,END_SUCCESS,END_DEBIT_FAIL,END_REV success;

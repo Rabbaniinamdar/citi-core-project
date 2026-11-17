@@ -1,0 +1,220 @@
+%% CitiCore Database Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+erDiagram
+    %% ============ AUTH DATABASE ============
+    subgraph AUTH_DB ["citicore_authdb"]
+        USERS {
+            BIGINT id PK
+            VARCHAR email UK "NOT NULL"
+            VARCHAR password "NOT NULL, BCrypt"
+            BOOLEAN email_verified "DEFAULT FALSE"
+            ENUM status "PENDING,ACTIVE,SUSPENDED,CLOSED"
+            VARCHAR verification_code "6 chars (legacy)"
+            DATETIME verification_expires_at
+            DATETIME created_at
+            DATETIME updated_at
+        }
+        ROLES {
+            BIGINT id PK
+            VARCHAR name UK "ROLE_CUSTOMER, ROLE_ADMIN"
+        }
+        USER_ROLES {
+            BIGINT user_id PK,FK
+            BIGINT role_id PK,FK
+        }
+        REFRESH_TOKENS {
+            BIGINT id PK
+            VARCHAR token UK "NOT NULL"
+            BIGINT user_id FK "NOT NULL"
+            BOOLEAN revoked "DEFAULT FALSE"
+            DATETIME expiry_date "NOT NULL"
+            DATETIME created_at "MISSING"
+        }
+    end
+
+    %% ============ USER DATABASE ============
+    subgraph USER_DB ["citicore_userdb"]
+        USER_PROFILES {
+            BIGINT id PK
+            BIGINT auth_user_id UK "NOT NULL, FK to auth.users"
+            VARCHAR first_name "NOT NULL"
+            VARCHAR last_name "NOT NULL"
+            VARCHAR email UK "NOT NULL"
+            VARCHAR phone_number UK "NULLABLE"
+            DATE date_of_birth
+            VARCHAR address
+            VARCHAR city
+            VARCHAR state
+            VARCHAR pincode
+            ENUM kyc_status "PENDING,UNDER_REVIEW,APPROVED,REJECTED"
+            DATETIME created_at
+            DATETIME updated_at
+        }
+        KYC_DOCUMENTS {
+            BIGINT id PK
+            BIGINT auth_user_id FK "NOT NULL"
+            VARCHAR document_type "PAN, AADHAAR, PASSPORT"
+            VARCHAR s3_key "NOT NULL"
+            VARCHAR file_name "NOT NULL"
+            VARCHAR content_type
+            BIGINT file_size
+            DATETIME created_at
+            UNIQUE uk_user_doc_type (auth_user_id, document_type)
+        }
+    end
+
+    %% ============ ACCOUNT DATABASE (Primary/Replica) ============
+    subgraph ACCOUNT_DB ["citicore_account (Primary/Replica)"]
+        ACCOUNTS {
+            BIGINT id PK
+            VARCHAR account_number UK "CITI + 12 digits"
+            BIGINT auth_user_id "NOT NULL, FK to auth.users (cross-db)"
+            ENUM account_type "SAVINGS, CURRENT"
+            DECIMAL balance "15,2 DEFAULT 0.00"
+            ENUM status "ACTIVE,INACTIVE,SUSPENDED,CLOSED"
+            VARCHAR nominee_name
+            BOOLEAN is_default "DEFAULT FALSE"
+            DATETIME created_at
+            DATETIME updated_at
+            INDEX idx_user (auth_user_id)
+            INDEX idx_number (account_number)
+            CHECK balance >= 0
+            CHECK savings_min_balance
+            CHECK current_min_balance
+        }
+        ACCOUNT_STATEMENTS {
+            BIGINT id PK
+            VARCHAR account_number "NOT NULL"
+            ENUM transaction_type "DEBIT, CREDIT"
+            DECIMAL amount "15,2 NOT NULL"
+            DECIMAL balance_after_txn "15,2 NOT NULL"
+            VARCHAR txn_ref "NOT NULL"
+            VARCHAR description
+            DATETIME created_at
+            INDEX idx_account (account_number)
+            INDEX idx_date (created_at)
+            UNIQUE uk_acc_txn_ref (account_number, txn_ref) "FIXED: was global unique"
+        }
+        ACCOUNT_OUTBOX {
+            BIGINT id PK
+            VARCHAR event_id UK "UUID"
+            VARCHAR account_number "NOT NULL"
+            VARCHAR topic "NOT NULL"
+            TEXT payload "NOT NULL"
+            ENUM status "PENDING,SENT,FAILED"
+            DATETIME created_at
+            INDEX idx_status (status)
+            INDEX idx_account (account_number)
+            INDEX idx_status_created (status, created_at) "ADDED"
+        }
+        ACCOUNT_SEQUENCES {
+            BIGINT id PK "DEFAULT 1"
+            BIGINT next_val "NOT NULL DEFAULT 1"
+        }
+    end
+
+    %% ============ TRANSACTION DATABASE ============
+    subgraph TRANSACTION_DB ["citicore_transactiondb"]
+        TRANSACTIONS {
+            BIGINT id PK
+            VARCHAR txn_ref UK "NOT NULL"
+            BIGINT auth_user_id "NOT NULL, FK to auth.users (cross-db)"
+            VARCHAR from_account "NOT NULL, FK to accounts (cross-db)"
+            VARCHAR to_account "NOT NULL, FK to accounts (cross-db)"
+            DECIMAL amount "15,2 NOT NULL"
+            ENUM type "TRANSFER, DEPOSIT, WITHDRAWAL"
+            ENUM status "INITIATED,DEBIT_SUCCESS,CREDIT_SUCCESS,FAILED,REVERSED"
+            DATETIME created_at
+            DATETIME updated_at "MISSING - NEEDED"
+            INDEX idx_user (auth_user_id)
+            INDEX idx_status (status)
+            INDEX idx_from (from_account)
+            INDEX idx_to (to_account)
+            INDEX idx_user_created (auth_user_id, created_at) "ADDED"
+        }
+        OUTBOX_EVENTS {
+            BIGINT id PK
+            VARCHAR event_id UK "UUID"
+            VARCHAR aggregate_id "txnRef"
+            VARCHAR topic "NOT NULL"
+            TEXT payload "NOT NULL"
+            ENUM status "PENDING,SENT,FAILED"
+            DATETIME created_at
+            INDEX idx_status (status)
+            INDEX idx_aggregate (aggregate_id)
+            INDEX idx_status_created (status, created_at) "ADDED"
+        }
+        IDEMPOTENCY_KEYS {
+            BIGINT id PK
+            BIGINT auth_user_id "NOT NULL, ADDED"
+            VARCHAR idempotency_key "NOT NULL"
+            VARCHAR txn_ref "NOT NULL"
+            VARCHAR status "DEFAULT INITIATED"
+            DATETIME created_at
+            UNIQUE uk_user_idempotency (auth_user_id, idempotency_key) "FIXED: was global"
+        }
+    end
+
+    %% ============ LEDGER DATABASE (PLANNED) ============
+    subgraph LEDGER_DB ["citicore_ledgerdb (PLANNED)"]
+        LEDGER_ACCOUNTS {
+            VARCHAR code PK "1000, 2000-12345..."
+            VARCHAR name "NOT NULL"
+            ENUM type "ASSET, LIABILITY, EQUITY, INCOME, EXPENSE"
+            CHAR currency "DEFAULT INR"
+            BOOLEAN is_control_account "DEFAULT FALSE"
+            VARCHAR parent_code FK "Self-referencing"
+        }
+        JOURNAL_ENTRIES {
+            BIGINT id PK
+            VARCHAR txn_ref UK "NOT NULL"
+            DATETIME entry_date "NOT NULL"
+            VARCHAR description
+            ENUM status "POSTED, REVERSED"
+            DATETIME created_at
+        }
+        JOURNAL_LINES {
+            BIGINT id PK
+            BIGINT journal_id FK "NOT NULL"
+            VARCHAR account_code FK "NOT NULL"
+            DECIMAL debit "19,4 DEFAULT 0, CHECK >= 0"
+            DECIMAL credit "19,4 DEFAULT 0, CHECK >= 0"
+            CHECK chk_one_side "(debit>0 AND credit=0) OR (debit=0 AND credit>0)"
+        }
+        LEDGER_BALANCES {
+            BIGINT id PK
+            VARCHAR account_code FK "NOT NULL"
+            DATE as_of_date "NOT NULL"
+            DECIMAL opening_balance "19,4"
+            DECIMAL total_debits "19,4"
+            DECIMAL total_credits "19,4"
+            DECIMAL closing_balance "19,4"
+            UNIQUE uk_account_date (account_code, as_of_date)
+        }
+    end
+
+    %% ============ RELATIONSHIPS ============
+    USERS ||--o{ USER_ROLES : has
+    ROLES ||--o{ USER_ROLES : assigned
+    USERS ||--o{ REFRESH_TOKENS : owns
+
+    USER_PROFILES ||--o{ KYC_DOCUMENTS : has
+
+    ACCOUNTS ||--o{ ACCOUNT_STATEMENTS : generates
+    ACCOUNTS ||--o{ ACCOUNT_OUTBOX : publishes
+
+    TRANSACTIONS ||--o{ OUTBOX_EVENTS : publishes
+    TRANSACTIONS ||--o{ IDEMPOTENCY_KEYS : tracks
+
+    JOURNAL_ENTRIES ||--o{ JOURNAL_LINES : contains
+    LEDGER_ACCOUNTS ||--o{ JOURNAL_LINES : referenced_by
+    LEDGER_ACCOUNTS ||--o{ LEDGER_BALANCES : tracks
+
+    %% ============ CROSS-DB REFERENCES (Application-Level) ============
+    ACCOUNTS }|--o{ USERS : "auth_user_id → users.id (app-level)"
+    ACCOUNT_STATEMENTS }|--o{ ACCOUNTS : "account_number → accounts.account_number"
+    TRANSACTIONS }|--o{ USERS : "auth_user_id → users.id (app-level)"
+    TRANSACTIONS }|--o{ ACCOUNTS : "from_account → accounts.account_number (app-level)"
+    TRANSACTIONS }|--o{ ACCOUNTS : "to_account → accounts.account_number (app-level)"
+    USER_PROFILES }|--o{ USERS : "auth_user_id → users.id (app-level)"
+    IDEMPOTENCY_KEYS }|--o{ USERS : "auth_user_id → users.id (app-level)"

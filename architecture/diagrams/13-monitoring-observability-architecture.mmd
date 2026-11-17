@@ -1,0 +1,175 @@
+%% CitiCore Monitoring and Observability Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+flowchart TB
+    subgraph INSTRUMENTATION ["Application Instrumentation"]
+        direction TB
+
+        subgraph METRICS_INSTR ["Metrics (Micrometer)"]
+            JVM_METRICS[JVM Metrics\nMemory, GC, Threads, Classes]
+            HTTP_METRICS[HTTP Server Metrics\nRequests, Duration, Errors\nRED: Rate, Errors, Duration]
+            DB_METRICS[Database Metrics\nHikariCP Pool\nActive, Idle, Pending, Usage]
+            CACHE_METRICS[Cache Metrics\nRedis: Gets, Puts, Hits, Misses\nEvictions, Latency]
+            KAFKA_METRICS[Kafka Metrics\nConsumer Lag, Fetch Rate\nProducer Send Rate, Errors]
+            BUSINESS_METRICS[Business Metrics (Custom)\ntransfers.initiated\ntransfers.completed\ntransfers.failed\ntransfers.reversed\naccounts.active\nbalance.total\nsaga.step.duration\noutbox.events.pending]
+        end
+
+        subgraph TRACING_INSTR ["Distributed Tracing (Micrometer Tracing + Brave)"]
+            TRACE_CONTEXT[Trace Context\nW3C TraceContext\nB3 Headers Support]
+            SPAN_CREATION[Span Creation\nController, Service, Repository\nFeign, Kafka, DB]
+            CONTEXT_PROPAGATION[Context Propagation\nHTTP: B3 Headers\nKafka: Record Headers\nFeign: Request Interceptor]
+            SAMPLING[Sampling\nProbability: 10% (prod)\n100% (staging)\nRate-Limiting Sampler]
+        end
+
+        subgraph LOGGING_INSTR ["Structured Logging (Logback + LogstashEncoder)"]
+            JSON_FORMAT[JSON Format\n@timestamp, level, logger\nmessage, thread, traceId, spanId]
+            MDC_FILTER[MDC Filter\nExtract traceId/spanId\nFrom Headers/Context\nInject into Log Context]
+            PII_MASKING[PII Masking\nAccount Numbers → ACC••••••\nEmails → u•••@domain.com\nCards → ••••••••••••1234]
+            CORRELATION[Correlation IDs\nRequest → Response\nCross-Service Trace\nBusiness Transaction ID]
+        end
+
+        JVM_METRICS --> HTTP_METRICS
+        HTTP_METRICS --> DB_METRICS
+        DB_METRICS --> CACHE_METRICS
+        CACHE_METRICS --> KAFKA_METRICS
+        KAFKA_METRICS --> BUSINESS_METRICS
+
+        TRACE_CONTEXT --> SPAN_CREATION
+        SPAN_CREATION --> CONTEXT_PROPAGATION
+        CONTEXT_PROPAGATION --> SAMPLING
+
+        JSON_FORMAT --> MDC_FILTER
+        MDC_FILTER --> PII_MASKING
+        PII_MASKING --> CORRELATION
+    end
+
+    subgraph COLLECTION ["Collection Layer"]
+        direction TB
+
+        PROMETHEUS[Prometheus\nServiceMonitor Discovery\nScrape Interval: 15s\nRetention: 15d\nHA: 2 Replicas + Thanos]
+        LOKI[Loki + Promtail\nLog Collection\nLabels: service, namespace, pod\nRetention: 30d\nObject Store: S3]
+        TEMPO[Tempo/Jaeger\nTrace Collection\nOTLP/Jaeger Thrift\nRetention: 7d\nObject Store: S3]
+        OTLP[OTEL Collector\nVendor-Neutral\nBatch/Queue Processors\nExport to All Backends]
+    end
+
+    subgraph STORAGE ["Storage Backends"]
+        TSDB[(Prometheus TSDB\nBlock Storage\nCompression: Gorilla\nDownsampling: 5m/1h)]
+        LOKI_STORE[(Loki Object Store\nS3/GCS\nIndex: Boltdb-shipper\nChunks: Compressed)]
+        TEMPO_STORE[(Tempo Object Store\nS3/GCS\nBlocks: Parquet\nBloom Filters)]
+    end
+
+    subgraph VISUALIZATION ["Visualization & Analysis"]
+        direction TB
+
+        GRAFANA[Grafana\nDashboards + Explore\nDatasources: Prometheus, Loki, Tempo]
+
+        subgraph DASHBOARDS ["Key Dashboards"]
+            SYS_OVERVIEW[System Overview\nGolden Signals: Rate, Errors, Duration, Saturation\nCluster, Node, Pod Health]
+            SVC_DEEP_DIVE[Service Deep Dive\nPer-Service RED\nJVM, DB Pool, Cache Hit Rate\nFeign/Kafka Latency]
+            BUSINESS_KPI[Business KPIs\nTransfers/Day, Success Rate\nAvg Transfer Time\nActive Accounts, Total Balance]
+            SAGA_MONITOR[Saga Monitor\nIn-Flight Sagas\nStep Durations, Failure Rates\nCompensation Rate]
+            KAFKA_MONITOR[Kafka Monitor\nConsumer Lag, Throughput\nUnder-Replicated Partitions\nController Health]
+            DB_MONITOR[Database Monitor\nQuery Latency, Connections\nReplication Lag, Lock Waits\nTable/Index Stats]
+        end
+
+        ALERTING[Alertmanager\nGrouping, Inhibition\nSilences, High Availability\nTemplates: Slack, PagerDuty, Email]
+    end
+
+    subgraph ALERT_RULES ["Critical Alert Rules"]
+        direction TB
+        ALERT_DOWN[ServiceDown\nup{job=~".*-service"} == 0\nfor 2m → Critical]
+        ALERT_ERROR_RATE[HighErrorRate\nrate(5xx[5m]) > 0.05\nfor 5m → Critical]
+        ALERT_LATENCY[HighLatency\nhistogram_quantile(0.99, 5m) > 2s\nfor 5m → Warning]
+        ALERT_KAFKA_LAG[KafkaConsumerLag\nkafka_lag > 10000\nfor 5m → Warning]
+        ALERT_OUTBOX_LAG[OutboxLag\noutbox_pending > 10000\nfor 5m → Critical]
+        ALERT_REPLICA_LAG[ReplicaLag\nmysql_replica_lag > 30s\nfor 5m → Warning]
+        ALERT_DISK[DiskSpace\ndisk_usage > 85%\nfor 10m → Warning]
+        ALERT_CERT[CertExpiry\nssl_expiry_days < 30\nfor 1h → Warning]
+        ALERT_BIZ[BusinessMetricAnomaly\ntransfers.completed drop > 50%\nfor 10m → Critical]
+    end
+
+    subgraph NOTIFICATION_CHANNELS ["Notification Channels"]
+        SLACK[Slack\n#alerts-critical\n#alerts-warning\n#deployments]
+        PAGERDUTY[PagerDuty\nCritical Only\nOn-Call Rotation\nEscalation Policies]
+        EMAIL[Email\nDaily/Weekly Reports\nDigest Notifications]
+        WEBHOOK[Webhook\nCustom Integrations\nRunbook Links]
+    end
+
+    subgraph HEALTH_CHECKS ["Health Endpoints"]
+        LIVENESS[Liveness Probe\n/actuator/health/liveness\nProcess Alive, No Deadlock\nFailure: Pod Restart]
+        READINESS[Readiness Probe\n/actuator/health/readiness\nDB, Kafka, Redis, Feign\nBusiness: Outbox Lag, Replica Lag\nFailure: Remove from Service]
+        STARTUP[Startup Probe\n/actuator/health/startup\nMigrations Complete\nTimeout: 5 minutes]
+    end
+
+    %% Connections
+    INSTRUMENTATION --> COLLECTION
+    METRICS_INSTR --> PROMETHEUS
+    TRACING_INSTR --> TEMPO
+    TRACING_INSTR --> OTLP
+    LOGGING_INSTR --> LOKI
+    LOGGING_INSTR --> OTLP
+
+    PROMETHEUS --> TSDB
+    LOKI --> LOKI_STORE
+    TEMPO --> TEMPO_STORE
+    OTLP --> PROMETHEUS
+    OTLP --> LOKI
+    OTLP --> TEMPO
+
+    TSDB --> GRAFANA
+    LOKI_STORE --> GRAFANA
+    TEMPO_STORE --> GRAFANA
+
+    GRAFANA --> DASHBOARDS
+    SYS_OVERVIEW --> GRAFANA
+    SVC_DEEP_DIVE --> GRAFANA
+    BUSINESS_KPI --> GRAFANA
+    SAGA_MONITOR --> GRAFANA
+    KAFKA_MONITOR --> GRAFANA
+    DB_MONITOR --> GRAFANA
+
+    TSDB --> ALERTING
+    ALERTING --> ALERT_RULES
+    ALERT_DOWN --> ALERTING
+    ALERT_ERROR_RATE --> ALERTING
+    ALERT_LATENCY --> ALERTING
+    ALERT_KAFKA_LAG --> ALERTING
+    ALERT_OUTBOX_LAG --> ALERTING
+    ALERT_REPLICA_LAG --> ALERTING
+    ALERT_DISK --> ALERTING
+    ALERT_CERT --> ALERTING
+    ALERT_BIZ --> ALERTING
+
+    ALERTING --> NOTIFICATION_CHANNELS
+    SLACK --> NOTIFICATION_CHANNELS
+    PAGERDUTY --> NOTIFICATION_CHANNELS
+    EMAIL --> NOTIFICATION_CHANNELS
+    WEBHOOK --> NOTIFICATION_CHANNELS
+
+    LIVENESS --> HEALTH_CHECKS
+    READINESS --> HEALTH_CHECKS
+    STARTUP --> HEALTH_CHECKS
+
+    READINESS -.->|Depends On| PROMETHEUS
+    READINESS -.->|Checks| DB_METRICS
+    READINESS -.->|Checks| KAFKA_METRICS
+    READINESS -.->|Checks| BUSINESS_METRICS
+
+    classDef instr fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef collection fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef storage fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef viz fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+    classDef dashboards fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef alerting fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    classDef alerts fill:#fff7ed,stroke:#ea580c,stroke-width:2px;
+    classDef notify fill:#f3f4f6,stroke:#6b7280,stroke-width:2px;
+    classDef health fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+
+    class INSTRUMENTATION,METRICS_INSTR,TRACING_INSTR,LOGGING_INSTR,JVM_METRICS,HTTP_METRICS,DB_METRICS,CACHE_METRICS,KAFKA_METRICS,BUSINESS_METRICS,TRACE_CONTEXT,SPAN_CREATION,CONTEXT_PROPAGATION,SAMPLING,JSON_FORMAT,MDC_FILTER,PII_MASKING,CORRELATION instr;
+    class COLLECTION,PROMETHEUS,LOKI,TEMPO,OTLP collection;
+    class STORAGE,TSDB,LOKI_STORE,TEMPO_STORE storage;
+    class VISUALIZATION,GRAFANA,ALERTING viz;
+    class DASHBOARDS,SYS_OVERVIEW,SVC_DEEP_DIVE,BUSINESS_KPI,SAGA_MONITOR,KAFKA_MONITOR,DB_MONITOR dashboards;
+    class ALERT_RULES,ALERT_DOWN,ALERT_ERROR_RATE,ALERT_LATENCY,ALERT_KAFKA_LAG,ALERT_OUTBOX_LAG,ALERT_REPLICA_LAG,ALERT_DISK,ALERT_CERT,ALERT_BIZ alerting;
+    class ALERT_DOWN,ALERT_ERROR_RATE,ALERT_LATENCY,ALERT_KAFKA_LAG,ALERT_OUTBOX_LAG,ALERT_REPLICA_LAG,ALERT_DISK,ALERT_CERT,ALERT_BIZ alerts;
+    class NOTIFICATION_CHANNELS,SLACK,PAGERDUTY,EMAIL,WEBHOOK notify;
+    class HEALTH_CHECKS,LIVENESS,READINESS,STARTUP health;

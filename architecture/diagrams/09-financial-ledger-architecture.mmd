@@ -1,0 +1,137 @@
+%% CitiCore Financial Ledger Architecture (Double-Entry)
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+flowchart TB
+    subgraph CURRENT_STATE ["Current State: Single-Entry (Account Statement)"]
+        direction TB
+        CURRENT_ACC[Account Service]
+        CURRENT_BAL[Single balance Column\naccounts.balance]
+        CURRENT_STMT[AccountStatement Table\nDEBIT or CREDIT per row]
+        CURRENT_ISSUE[Issues:\n• No double-entry\n• No GL reconciliation\n• No trial balance\n• No control accounts\n• Single point of truth\n• Audit incomplete]
+
+        CURRENT_ACC --> CURRENT_BAL
+        CURRENT_ACC --> CURRENT_STMT
+        CURRENT_BAL --> CURRENT_ISSUE
+        CURRENT_STMT --> CURRENT_ISSUE
+    end
+
+    subgraph TARGET_STATE ["Target State: Double-Entry General Ledger"]
+        direction TB
+
+        subgraph COA ["Chart of Accounts"]
+            COA_ASSET[ASSET (1xxx)\n1000 Cash & Equivalents\n1100 Central Bank\n1200 Loans & Advances\n1300 Investments]
+            COA_LIAB[LIABILITY (2xxx)\n2000 Customer Deposits (Control)\n2100 Interbank Borrowings\n2200 Other Liabilities]
+            COA_EQUITY[EQUITY (3xxx)\n3000 Share Capital\n3100 Reserves\n3200 Retained Earnings]
+            COA_INCOME[INCOME (4xxx)\n4000 Interest Income\n4100 Fee Income\n4200 Other Income]
+            COA_EXPENSE[EXPENSE (5xxx)\n5000 Interest Expense\n5100 Operating Expenses\n5200 Provisions]
+            COA_CUST[CUSTOMER SUB-LEDGER\n2000-123456789012\n2000-987654321098\n(Linked to 2000 Control)]
+        end
+
+        subgraph JOURNAL ["Journal Entry Processing"]
+            JE_CREATE[Create Journal Entry\nBusiness Event → txnRef]
+            JE_LINES[Add Journal Lines\nDebit/Credit per Rule]
+            JE_VALIDATE[Validate Balanced\nΣ Debits = Σ Credits]
+            JE_DB_TRIGGER[DB Trigger Enforces\nBalance Constraint]
+            JE_POST[POST Status\nImmutable Once Posted]
+            JE_REVERSE[REVERSE Status\nCompensating Entry]
+        end
+
+        subgraph POSTING_RULES ["Posting Rules (Examples)"]
+            RULE_DEPOSIT[Customer Deposit (Cash)\nDr: 1000-Cash\nCr: 2000-{accNo}-Cust Deposits]
+            RULE_WITHDRAW[Customer Withdrawal (Cash)\nDr: 2000-{accNo}-Cust Deposits\nCr: 1000-Cash]
+            RULE_TRANSFER[Internal Transfer A→B\nDr: 2000-{A}-Cust Deposits\nCr: 2000-{B}-Cust Deposits]
+            RULE_LOAN[Loan Disbursement\nDr: 1200-Loans Receivable\nCr: 2000-{accNo}-Cust Deposits]
+            RULE_INTEREST[Interest Accrual\nDr: 2000-{accNo}-Cust Deposits\nCr: 4000-Interest Income]
+            RULE_FEE[Fee Collection\nDr: 2000-{accNo}-Cust Deposits\nCr: 4100-Fee Income]
+        end
+
+        subgraph RECONCILIATION ["Reconciliation & Controls"]
+            RECON_TRIAL[Trial Balance Generation\nDaily/Monthly]
+            RECON_GL[GL Reconciliation\nSub-ledger → Control Account]
+            RECON_ACC[Account Balance Reconciliation\naccounts.balance = Σ statements]
+            RECON_JOURNAL[Journal Balance Check\nDB Trigger: Σdebit = Σcredit]
+            RECON_AUDIT[Immutable Audit Trail\nAppend-only + Crypto Hash]
+        end
+
+        subgraph LEDGER_SERVICE ["Ledger Service (New Microservice)"]
+            LS_API[REST API\n/api/v1/ledger/*]
+            LS_COA[COA Management\nCRUD Accounts]
+            LS_JOURNAL[JournalService\nPosting Engine]
+            LS_TRIAL[Trial Balance API]
+            LS_RECON[Reconciliation Jobs\nScheduled]
+            LS_AUDIT[Audit Trail API\nImmutable Logs]
+        end
+    end
+
+    %% Connections
+    COA_ASSET --> COA_LIAB
+    COA_LIAB --> COA_EQUITY
+    COA_EQUITY --> COA_INCOME
+    COA_INCOME --> COA_EXPENSE
+    COA_LIAB --> COA_CUST
+
+    JE_CREATE --> JE_LINES
+    JE_LINES --> JE_VALIDATE
+    JE_VALIDATE --> JE_DB_TRIGGER
+    JE_DB_TRIGGER --> JE_POST
+    JE_POST --> JE_REVERSE
+
+    RULE_DEPOSIT --> JE_LINES
+    RULE_WITHDRAW --> JE_LINES
+    RULE_TRANSFER --> JE_LINES
+    RULE_LOAN --> JE_LINES
+    RULE_INTEREST --> JE_LINES
+    RULE_FEE --> JE_LINES
+
+    JE_POST --> RECON_TRIAL
+    JE_POST --> RECON_GL
+    JE_POST --> RECON_ACC
+    JE_VALIDATE --> RECON_JOURNAL
+    JE_POST --> RECON_AUDIT
+
+    LS_API --> LS_COA
+    LS_API --> LS_JOURNAL
+    LS_API --> LS_TRIAL
+    LS_API --> LS_RECON
+    LS_API --> LS_AUDIT
+
+    LS_JOURNAL --> JE_CREATE
+    LS_RECON --> RECON_TRIAL
+    LS_RECON --> RECON_GL
+    LS_RECON --> RECON_ACC
+
+    %% Integration with existing services
+    ACC_SVC[Account Service] -.->|Feign: Post Journal| LS_JOURNAL
+    TXN_SVC[Transaction Service] -.->|Feign: Post Journal| LS_JOURNAL
+    LEDGER_DB[(citicore_ledgerdb\nledger_accounts, journal_entries,\njournal_lines, ledger_balances)] --> LS_JOURNAL
+    LS_JOURNAL --> LEDGER_DB
+
+    %% Invariants
+    subgraph INVARIANTS ["Database Invariants (Constraints)"]
+        INV1[Journal Line: Exactly One Side\nCHECK (debit>0 AND credit=0) OR (debit=0 AND credit>0)]
+        INV2[No Negative Amounts\nCHECK (debit>=0 AND credit>=0)]
+        INV3[Journal Must Balance\nTRIGGER: Σdebit = Σcredit per journal_id]
+        INV4[Account Balance Consistency\nVIEW: account.balance = Σjournal_lines]
+        INV5[Control Account = ΣSub-ledgers\n2000 balance = Σ2000-xxxxxxxxxx]
+    end
+
+    classDef current fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    classDef target fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef coa fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef journal fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef rules fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+    classDef recon fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef service fill:#fff7ed,stroke:#ea580c,stroke-width:2px;
+    classDef db fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+    classDef inv fill:#f3f4f6,stroke:#6b7280,stroke-width:1px,stroke-dasharray: 5 5;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+
+    class CURRENT_STATE,CURRENT_ACC,CURRENT_BAL,CURRENT_STMT,CURRENT_ISSUE current;
+    class TARGET_STATE,COA,JOURNAL,POSTING_RULES,RECONCILIATION,LEDGER_SERVICE target;
+    class COA_ASSET,COA_LIAB,COA_EQUITY,COA_INCOME,COA_EXPENSE,COA_CUST coa;
+    class JE_CREATE,JE_LINES,JE_VALIDATE,JE_DB_TRIGGER,JE_POST,JE_REVERSE journal;
+    class RULE_DEPOSIT,RULE_WITHDRAW,RULE_TRANSFER,RULE_LOAN,RULE_INTEREST,RULE_FEE rules;
+    class RECON_TRIAL,RECON_GL,RECON_ACC,RECON_JOURNAL,RECON_AUDIT recon;
+    class LS_API,LS_COA,LS_JOURNAL,LS_TRIAL,LS_RECON,LS_AUDIT service;
+    class LEDGER_DB db;
+    class INV1,INV2,INV3,INV4,INV5 inv;
+    class ACC_SVC,TXN_SVC planned;

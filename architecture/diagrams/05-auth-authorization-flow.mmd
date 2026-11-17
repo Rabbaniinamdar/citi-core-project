@@ -1,0 +1,148 @@
+%% CitiCore Authentication and Authorization Flow
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+flowchart TD
+    subgraph LOGIN_FLOW ["1. User Login Flow"]
+        L_START([User Enters Credentials])
+        L_CLIENT[Client: POST /auth/login\n{email, password}]
+        L_GW[API Gateway: Rate Limit Check\n5 req/min per IP]
+        L_AUTH[Auth Service: Validate Credentials]
+        L_DB[(citicore_authdb\nusers table)]
+        L_BCRYPT[BCrypt Verify\npassword hash]
+        L_TOKENS[Generate Tokens\nAccess: 15min JWT HS256\nRefresh: 7day Opaque UUID]
+        L_REFRESH_DB[Store Refresh Token\nRevoke Previous]
+        L_RESPONSE[Return 200 OK\n{accessToken, refreshToken}]
+        L_STORE[Client: Store Securely\nMemory only, not localStorage]
+
+        L_START --> L_CLIENT
+        L_CLIENT --> L_GW
+        L_GW --> L_AUTH
+        L_AUTH --> L_DB
+        L_DB --> L_BCRYPT
+        L_BCRYPT -->|Valid| L_TOKENS
+        L_BCRYPT -->|Invalid| L_FAIL[Return 401 Unauthorized]
+        L_TOKENS --> L_REFRESH_DB
+        L_REFRESH_DB --> L_RESPONSE
+        L_RESPONSE --> L_STORE
+    end
+
+    subgraph TOKEN_VALIDATION ["2. Request Authentication Flow"]
+        R_START([Client Makes API Call\nAuthorization: Bearer <accessToken>])
+        R_GW[API Gateway: Extract JWT\nValidate Signature & Expiry]
+        R_CLAIMS[Extract Claims\nuserId, email, roles]
+        R_HEADERS[Add Headers\nX-User-Id, X-User-Roles, X-User-Email]
+        R_FORWARD[Forward to Target Service]
+        R_FILTER[JwtAuthenticationFilter\nValidate JWT, Set SecurityContext]
+        R_AUTHZ[@PreAuthorize\nMethod-Level Security]
+        R_EXECUTE[Execute Business Logic]
+
+        R_START --> R_GW
+        R_GW --> R_CLAIMS
+        R_CLAIMS --> R_HEADERS
+        R_HEADERS --> R_FORWARD
+        R_FORWARD --> R_FILTER
+        R_FILTER --> R_AUTHZ
+        R_AUTHZ --> R_EXECUTE
+    end
+
+    subgraph REFRESH_FLOW ["3. Refresh Token Rotation"]
+        RF_START[Client: POST /auth/refresh\n{refreshToken}]
+        RF_GW[Gateway: Forward]
+        RF_AUTH[Auth Service: Validate Refresh Token]
+        RF_DB[(citicore_authdb\nrefresh_tokens table)]
+        RF_CHECK{Valid, Not Revoked,\nNot Expired?}
+        RF_ROTATE[Revoke Old Token\nGenerate New Pair]
+        RF_STORE[Store New Refresh Token]
+        RF_RETURN[Return New Tokens]
+        RF_EXPIRED[Return 401: Token Expired\nRequire Full Login]
+
+        RF_START --> RF_GW
+        RF_GW --> RF_AUTH
+        RF_AUTH --> RF_DB
+        RF_DB --> RF_CHECK
+        RF_CHECK -->|Yes| RF_ROTATE
+        RF_CHECK -->|No| RF_EXPIRED
+        RF_ROTATE --> RF_STORE
+        RF_STORE --> RF_RETURN
+    end
+
+    subgraph LOGOUT_FLOW ["4. Logout Flow"]
+        LO_START[Client: POST /auth/logout\n{refreshToken}]
+        LO_AUTH[Auth Service: Mark Token Revoked]
+        LO_DB[(refresh_tokens\nrevoked = true)]
+        LO_SUCCESS[Return 200 OK]
+
+        LO_START --> LO_AUTH
+        LO_AUTH --> LO_DB
+        LO_DB --> LO_SUCCESS
+    end
+
+    subgraph MFA_FLOW ["5. MFA/TOTP Flow (Planned)"]
+        MFA_START[User Enables MFA]
+        MFA_QR[Generate QR Code\nTOTP Secret]
+        MFA_APP[User Scans in Authenticator App]
+        MFA_VERIFY[POST /auth/mfa/verify\n{code}]
+        MFA_VALIDATE[Validate TOTP Code\nRFC 6238]
+        MFA_BACKUP[Generate Backup Codes\nStore Hashed]
+        MFA_LOGIN[Login: Require TOTP\nAfter Password]
+        MFA_CHALLENGE[Challenge for TOTP Code]
+        MFA_GRANT[Grant Tokens on Success]
+
+        MFA_START --> MFA_QR
+        MFA_QR --> MFA_APP
+        MFA_APP --> MFA_VERIFY
+        MFA_VERIFY --> MFA_VALIDATE
+        MFA_VALIDATE --> MFA_BACKUP
+        MFA_BACKUP --> MFA_LOGIN
+        MFA_LOGIN --> MFA_CHALLENGE
+        MFA_CHALLENGE --> MFA_GRANT
+    end
+
+    subgraph PASSWORD_RESET ["6. Password Reset Flow (Planned)"]
+        PR_START[User: Forgot Password]
+        PR_EMAIL[POST /auth/forgot-password\n{email}]
+        PR_TOKEN[Generate Secure Reset Token\nJWT, 15min, Single-Use]
+        PR_STORE[Store Token Hash in DB]
+        PR_SEND[Email Reset Link]
+        PR_CLICK[User Clicks Link]
+        PR_VALIDATE[Validate Token\nNot Used, Not Expired]
+        PR_NEW[POST /auth/reset-password\n{token, newPassword}]
+        PR_POLICY[Enforce Password Policy\n12+ chars, complexity]
+        PR_UPDATE[Update Password Hash\nRevoke All Refresh Tokens]
+        PR_DONE[Return Success]
+
+        PR_START --> PR_EMAIL
+        PR_EMAIL --> PR_TOKEN
+        PR_TOKEN --> PR_STORE
+        PR_STORE --> PR_SEND
+        PR_SEND --> PR_CLICK
+        PR_CLICK --> PR_VALIDATE
+        PR_VALIDATE --> PR_NEW
+        PR_NEW --> PR_POLICY
+        PR_POLICY --> PR_UPDATE
+        PR_UPDATE --> PR_DONE
+    end
+
+    subgraph RBAC_MODEL ["7. Role-Based Access Control"]
+        ROLES[Roles:\nCUSTOMER, ADMIN, SUPPORT,\nAUDITOR, SERVICE]
+        PERMS[Permissions:\nREAD, WRITE, ADMIN, AUDIT]
+        ENDPOINTS[Endpoint Security:\n@PreAuthorize(\"hasRole('ADMIN')\")\n@PreAuthorize(\"hasRole('SERVICE')\")]
+        OWNERSHIP[Ownership Checks:\naccount.authUserId == currentUserId]
+        KYC_GATE[KYC Gate:\nAccount creation requires\nKYC_APPROVED]
+
+        ROLES --> PERMS
+        PERMS --> ENDPOINTS
+        ENDPOINTS --> OWNERSHIP
+        OWNERSHIP --> KYC_GATE
+    end
+
+    classDef flow fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef db fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef decision fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+    classDef rbac fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+
+    class L_START,L_CLIENT,L_GW,L_AUTH,L_BCRYPT,L_TOKENS,L_REFRESH_DB,L_RESPONSE,L_STORE,R_START,R_GW,R_CLAIMS,R_HEADERS,R_FORWARD,R_FILTER,R_AUTHZ,R_EXECUTE,RF_START,RF_GW,RF_AUTH,RF_ROTATE,RF_STORE,RF_RETURN,LO_START,LO_AUTH,LO_SUCCESS,PR_START,PR_EMAIL,PR_TOKEN,PR_STORE,PR_SEND,PR_CLICK,PR_VALIDATE,PR_NEW,PR_POLICY,PR_UPDATE,PR_DONE flow;
+    class L_DB,RF_DB,LO_DB,PR_STORE db;
+    class RF_CHECK decision;
+    class MFA_START,MFA_QR,MFA_APP,MFA_VERIFY,MFA_VALIDATE,MFA_BACKUP,MFA_LOGIN,MFA_CHALLENGE,MFA_GRANT,PR_START,PR_EMAIL,PR_TOKEN,PR_STORE,PR_SEND,PR_CLICK,PR_VALIDATE,PR_NEW,PR_POLICY,PR_UPDATE,PR_DONE planned;
+    class ROLES,PERMS,ENDPOINTS,OWNERSHIP,KYC_GATE rbac;

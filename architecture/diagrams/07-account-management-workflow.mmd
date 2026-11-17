@@ -1,0 +1,143 @@
+%% CitiCore Account Management Workflow
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+flowchart TD
+    START([Authenticated Customer\nJWT Validated]) --> ACTION{Select Action}
+
+    %% ============ BALANCE INQUIRY ============
+    ACTION -->|View Balance| BALANCE[GET /api/v1/accounts/balance/{accountNumber}]
+    BALANCE --> CACHE_CHECK{Redis Cache Hit?}
+    CACHE_CHECK -->|Yes| CACHE_RETURN[Return Cached Balance\nSource: Redis]
+    CACHE_CHECK -->|No| REPLICA_QUERY[Query Replica DB\nSELECT balance FROM accounts]
+    REPLICA_QUERY --> CACHE_UPDATE[Update Redis Cache\nTTL: 5 minutes]
+    CACHE_UPDATE --> REPLICA_RETURN[Return Balance\nSource: Replica DB]
+
+    %% ============ DEPOSIT ============
+    ACTION -->|Deposit| DEPOSIT[POST /api/v1/accounts/deposit\n{accountNumber, amount, description}]
+    DEPOSIT --> VALIDATE_DEP_AMT{Amount > 0?}
+    VALIDATE_DEP_AMT -->|No| ERR_DEP_AMT[Return 400: Invalid Amount]
+    VALIDATE_DEP_AMT -->|Yes| VALIDATE_DEP_OWN{Ownership Check\naccount.authUserId == currentUser?}
+    VALIDATE_DEP_OWN -->|No| ERR_DEP_OWN[Return 403: Unauthorized]
+    VALIDATE_DEP_OWN -->|Yes| LOCK_DEP[SELECT ... FOR UPDATE\nAccount Row Lock]
+    LOCK_DEP --> CHECK_STATUS_DEP{Account ACTIVE?}
+    CHECK_STATUS_DEP -->|No| ERR_DEP_STATUS[Return 400: Account Not Active]
+    CHECK_STATUS_DEP -->|Yes| CALC_NEW_BAL_DEP[newBalance = balance + amount]
+    CALC_NEW_BAL_DEP --> UPDATE_BAL_DEP[UPDATE accounts\nSET balance = newBalance]
+    UPDATE_BAL_DEP --> STMT_DEP[INSERT AccountStatement\n{DEBIT/CREDIT: CREDIT,\namount, balanceAfterTxn,\ntxnRef, description}]
+    STMT_DEP --> OUTBOX_DEP[INSERT AccountOutboxEvent\n{ACCOUNT_CREATED/DEPOSIT,\ntopic: account-events-topic}]
+    OUTBOX_DEP --> LEDGER_DEP[Ledger: Post Journal Entry]
+    LEDGER_DEP --> LEDGER_DB[(citicore_ledgerdb)]
+    LEDGER_DEP --> JOURNAL_DEP[Journal Entry:\nDebit: 1000-Cash\nCredit: 2000-{accNo}-Customer Deposits]
+    JOURNAL_DEP --> COMMIT_DEP[COMMIT Transaction]
+    COMMIT_DEP --> CACHE_INVAL_DEP[Invalidate Redis Cache\nfor accountNumber]
+    CACHE_INVAL_DEP --> NOTIF_DEP[Kafka → Notification Service\nDeposit Success Email]
+    NOTIF_DEP --> RET_DEP[Return 200 OK\n{newBalance, txnRef}]
+
+    %% ============ WITHDRAWAL ============
+    ACTION -->|Withdraw| WITHDRAW[POST /api/v1/accounts/withdraw\n{accountNumber, amount, description}]
+    WITHDRAW --> VALIDATE_WD_AMT{Amount > 0?}
+    VALIDATE_WD_AMT -->|No| ERR_WD_AMT[Return 400: Invalid Amount]
+    VALIDATE_WD_AMT -->|Yes| VALIDATE_WD_OWN{Ownership Check\naccount.authUserId == currentUser?}
+    VALIDATE_WD_OWN -->|No| ERR_WD_OWN[Return 403: Unauthorized]
+    VALIDATE_WD_OWN -->|Yes| LOCK_WD[SELECT ... FOR UPDATE\nAccount Row Lock]
+    LOCK_WD --> CHECK_STATUS_WD{Account ACTIVE?}
+    CHECK_STATUS_WD -->|No| ERR_WD_STATUS[Return 400: Account Not Active]
+    CHECK_STATUS_WD -->|Yes| CHECK_MIN_BAL{balance - amount >= minBalance?\nSAVINGS: 1000, CURRENT: 5000}
+    CHECK_MIN_BAL -->|No| ERR_MIN_BAL[Return 400: Minimum Balance Violation]
+    CHECK_MIN_BAL -->|Yes| CALC_NEW_BAL_WD[newBalance = balance - amount]
+    CALC_NEW_BAL_WD --> UPDATE_BAL_WD[UPDATE accounts\nSET balance = newBalance]
+    UPDATE_BAL_WD --> STMT_WD[INSERT AccountStatement\n{DEBIT/CREDIT: DEBIT,\namount, balanceAfterTxn,\ntxnRef, description}]
+    STMT_WD --> OUTBOX_WD[INSERT AccountOutboxEvent\n{WITHDRAWAL,\ntopic: account-events-topic}]
+    OUTBOX_WD --> LEDGER_WD[Ledger: Post Journal Entry]
+    LEDGER_WD --> LEDGER_DB
+    LEDGER_WD --> JOURNAL_WD[Journal Entry:\nDebit: 2000-{accNo}-Customer Deposits\nCredit: 1000-Cash]
+    JOURNAL_WD --> COMMIT_WD[COMMIT Transaction]
+    COMMIT_WD --> CACHE_INVAL_WD[Invalidate Redis Cache]
+    CACHE_INVAL_WD --> NOTIF_WD[Kafka → Notification Service\nWithdrawal Success Email]
+    NOTIF_WD --> RET_WD[Return 200 OK\n{newBalance, txnRef}]
+
+    %% ============ ACCOUNT STATEMENT ============
+    ACTION -->|View Statement| STMT[GET /api/v1/accounts/statement/{accountNumber}\n{page, size, fromDate, toDate}]
+    STMT --> VALIDATE_STMT_OWN{Ownership Check}
+    VALIDATE_STMT_OWN -->|No| ERR_STMT_OWN[Return 403: Unauthorized]
+    VALIDATE_STMT_OWN -->|Yes| QUERY_STMT[Query Replica DB\nPagination + Date Filter]
+    QUERY_STMT --> RET_STMT[Return Paginated\nAccountStatement[]]
+
+    %% ============ MINI STATEMENT ============
+    ACTION -->|Mini Statement| MINI[GET /api/v1/accounts/mini-statement/{accountNumber}]
+    MINI --> VALIDATE_MINI_OWN{Ownership Check}
+    VALIDATE_MINI_OWN -->|No| ERR_MINI_OWN[Return 403: Unauthorized]
+    VALIDATE_MINI_OWN -->|Yes| QUERY_MINI[Query Replica DB\nLIMIT 10 ORDER BY created_at DESC]
+    QUERY_MINI --> RET_MINI[Return Last 10 Transactions]
+
+    %% ============ PDF STATEMENT ============
+    ACTION -->|PDF Statement| PDF[GET /api/v1/accounts/statement/{accountNumber}/pdf\n{fromDate, toDate}]
+    PDF --> VALIDATE_PDF_OWN{Ownership Check}
+    VALIDATE_PDF_OWN -->|No| ERR_PDF_OWN[Return 403: Unauthorized]
+    VALIDATE_PDF_OWN -->|Yes| GEN_PDF[Generate PDF via iText\nTemplate + Data]
+    GEN_PDF --> STORE_PDF[Store in S3\nReturn Presigned URL]
+    STORE_PDF --> RET_PDF[Return 200 OK\n{downloadUrl, expiresAt}]
+
+    %% ============ ACCOUNT CREATION ============
+    ACTION -->|Create Account| CREATE_ACC[POST /api/v1/accounts/create\n{accountType: SAVINGS/CURRENT}]
+    CREATE_ACC --> KYC_CHECK_CREATE[Feign: UserClient.getKycStatus(userId)]
+    KYC_CHECK_CREATE --> USER_KYC[User Service Returns KYC Status]
+    USER_KYC --> KYC_APPROVED{KYC == APPROVED?}
+    KYC_APPROVED -->|No| ERR_KYC_CREATE[Return 400: KYC Required]
+    KYC_APPROVED -->|Yes| CHECK_EXISTING{Already Has This Type?}
+    CHECK_EXISTING -->|Yes| ERR_DUP_TYPE[Return 400: Account Type Exists]
+    CHECK_EXISTING -->|No| GEN_ACC_NUM_CREATE[Generate Account Number\nSequence: CITI + 12 digits]
+    GEN_ACC_NUM_CREATE --> CREATE_ACC_DB[INSERT Account\nbalance=0, status=ACTIVE]
+    CREATE_ACC_DB --> SET_DEFAULT_CREATE[Set as Default if First]
+    SET_DEFAULT_CREATE --> OUTBOX_ACC_CREATE[Outbox: ACCOUNT_CREATED]
+    OUTBOX_ACC_CREATE --> LEDGER_ACC_CREATE[Ledger: Open Sub-Ledger\n2000-{accNo}-Customer Deposits]
+    LEDGER_ACC_CREATE --> RET_ACC_CREATE[Return 201: Account Created]
+
+    %% ============ CLOSE ACCOUNT ============
+    ACTION -->|Close Account| CLOSE[POST /api/v1/accounts/{accountNumber}/close]
+    CLOSE --> VALIDATE_CLOSE_OWN{Ownership Check}
+    VALIDATE_CLOSE_OWN -->|No| ERR_CLOSE_OWN[Return 403: Unauthorized]
+    VALIDATE_CLOSE_OWN -->|Yes| CHECK_ZERO_BAL{balance == 0?}
+    CHECK_ZERO_BAL -->|No| ERR_BAL_NOT_ZERO[Return 400: Transfer Balance First]
+    CHECK_ZERO_BAL -->|Yes| CHECK_HOLDS{No Regulatory Holds?}
+    CHECK_HOLDS -->|No| ERR_HOLDS[Return 400: Regulatory Hold Exists]
+    CHECK_HOLDS -->|Yes| UPDATE_STATUS_CLOSE[UPDATE accounts\nSET status=CLOSED]
+    UPDATE_STATUS_CLOSE --> LEDGER_CLOSE[Ledger: Close Sub-Ledger\nArchive 2000-{accNo}]
+    LEDGER_CLOSE --> RET_CLOSE[Return 200 OK: Account Closed]
+
+    %% ============ TRANSFER VALIDATION (Internal) ============
+    ACTION -->|Validate Transfer| VALIDATE_XFER[GET /api/v1/accounts/validate-transfer\n{accountNumber, amount}]
+    VALIDATE_XFER --> CHECK_XFER_EXISTS{Account Exists?}
+    CHECK_XFER_EXISTS -->|No| ERR_XFER_NOT_FOUND[Return 404: Account Not Found]
+    CHECK_XFER_EXISTS -->|Yes| CHECK_XFER_ACTIVE{Account ACTIVE?}
+    CHECK_XFER_ACTIVE -->|No| ERR_XFER_INACTIVE[Return 400: Account Inactive]
+    CHECK_XFER_ACTIVE -->|Yes| CHECK_XFER_BAL{balance >= amount + minBalance?}
+    CHECK_XFER_BAL -->|No| ERR_XFER_INSUFF[Return 400: Insufficient Balance]
+    CHECK_XFER_BAL -->|Yes| RET_XFER_OK[Return 200 OK: Valid]
+
+    %% End
+    CACHE_RETURN --> END
+    REPLICA_RETURN --> END
+    RET_DEP --> END
+    RET_WD --> END
+    RET_STMT --> END
+    RET_MINI --> END
+    RET_PDF --> END
+    RET_ACC_CREATE --> END
+    RET_CLOSE --> END
+    RET_XFER_OK --> END
+
+    classDef action fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef decision fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef error fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    classDef db fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef cache fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef ledger fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+    classDef success fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+
+    class BALANCE,CACHE_CHECK,DEPOSIT,VALIDATE_DEP_AMT,VALIDATE_DEP_OWN,LOCK_DEP,CHECK_STATUS_DEP,CALC_NEW_BAL_DEP,UPDATE_BAL_DEP,STMT_DEP,OUTBOX_DEP,CACHE_INVAL_DEP,RET_DEP,WITHDRAW,VALIDATE_WD_AMT,VALIDATE_WD_OWN,LOCK_WD,CHECK_STATUS_WD,CHECK_MIN_BAL,CALC_NEW_BAL_WD,UPDATE_BAL_WD,STMT_WD,OUTBOX_WD,CACHE_INVAL_WD,RET_WD,STMT,VALIDATE_STMT_OWN,QUERY_STMT,RET_STMT,MINI,VALIDATE_MINI_OWN,QUERY_MINI,RET_MINI,PDF,VALIDATE_PDF_OWN,GEN_PDF,STORE_PDF,RET_PDF,CREATE_ACC,KYC_CHECK_CREATE,CHECK_EXISTING,GEN_ACC_NUM_CREATE,CREATE_ACC_DB,SET_DEFAULT_CREATE,OUTBOX_ACC_CREATE,RET_ACC_CREATE,CLOSE,VALIDATE_CLOSE_OWN,CHECK_ZERO_BAL,CHECK_HOLDS,UPDATE_STATUS_CLOSE,RET_CLOSE,VALIDATE_XFER,CHECK_XFER_EXISTS,CHECK_XFER_ACTIVE,CHECK_XFER_BAL,RET_XFER_OK action;
+    class CACHE_CHECK,VALIDATE_DEP_AMT,VALIDATE_DEP_OWN,CHECK_STATUS_DEP,VALIDATE_WD_AMT,VALIDATE_WD_OWN,CHECK_STATUS_WD,CHECK_MIN_BAL,VALIDATE_STMT_OWN,VALIDATE_MINI_OWN,VALIDATE_PDF_OWN,KYC_APPROVED,CHECK_EXISTING,VALIDATE_CLOSE_OWN,CHECK_ZERO_BAL,CHECK_HOLDS,CHECK_XFER_EXISTS,CHECK_XFER_ACTIVE,CHECK_XFER_BAL decision;
+    class ERR_DEP_AMT,ERR_DEP_OWN,ERR_DEP_STATUS,ERR_WD_AMT,ERR_WD_OWN,ERR_WD_STATUS,ERR_MIN_BAL,ERR_STMT_OWN,ERR_MINI_OWN,ERR_PDF_OWN,ERR_KYC_CREATE,ERR_DUP_TYPE,ERR_CLOSE_OWN,ERR_BAL_NOT_ZERO,ERR_HOLDS,ERR_XFER_NOT_FOUND,ERR_XFER_INACTIVE,ERR_XFER_INSUFF error;
+    class REPLICA_QUERY,CACHE_UPDATE,LOCK_DEP,UPDATE_BAL_DEP,STMT_DEP,OUTBOX_DEP,LOCK_WD,UPDATE_BAL_WD,STMT_WD,OUTBOX_WD,QUERY_STMT,QUERY_MINI,CREATE_ACC_DB,OUTBOX_ACC_CREATE,UPDATE_STATUS_CLOSE,CHECK_XFER_BAL db;
+    class CACHE_RETURN,CACHE_CHECK,CACHE_UPDATE,CACHE_INVAL_DEP,CACHE_INVAL_WD cache;
+    class LEDGER_DEP,JOURNAL_DEP,LEDGER_WD,JOURNAL_WD,LEDGER_ACC_CREATE,LEDGER_CLOSE,LEDGER_DB ledger;
+    class CACHE_RETURN,REPLICA_RETURN,RET_DEP,RET_WD,RET_STMT,RET_MINI,RET_PDF,RET_ACC_CREATE,RET_CLOSE,RET_XFER_OK success;

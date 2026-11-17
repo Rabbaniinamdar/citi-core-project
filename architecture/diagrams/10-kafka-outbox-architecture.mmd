@@ -1,0 +1,173 @@
+%% CitiCore Kafka and Transactional Outbox Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+flowchart TB
+    subgraph OUTBOX_PATTERN ["Transactional Outbox Pattern"]
+        direction TB
+
+        subgraph APPLICATION ["Application Code (Service Layer)"]
+            APP_LOGIC[Business Logic\nDeposit, Withdraw, Transfer]
+            APP_DB[Database Transaction\nBEGIN ... COMMIT]
+        end
+
+        subgraph DATABASE ["Database (Same Transaction)"]
+            BIZ_TABLE[Business Table\naccounts, transactions]
+            OUTBOX_TABLE[Outbox Table\naccount_outbox, outbox_events]
+            ATOMIC[ATOMIC: Both Insert\nor Both Rollback]
+        end
+
+        subgraph PUBLISHER ["Outbox Publisher (Background)"]
+            POLL[Poll Every 5 Seconds\nSELECT * FROM outbox\nWHERE status=PENDING\nLIMIT 100]
+            BATCH[Batch Events\n100 max per poll]
+            SEND[Send to Kafka\nStringSerializer\nAvoids Double JSON]
+            ACK[On Success: UPDATE\nstatus=SENT]
+            RETRY[On Failure: Retry\nExponential Backoff\nMax 3 Attempts]
+            DLQ[After Max Retries:\nstatus=FAILED → DLQ Topic]
+        end
+
+        APP_LOGIC --> APP_DB
+        APP_DB --> BIZ_TABLE
+        APP_DB --> OUTBOX_TABLE
+        BIZ_TABLE --> ATOMIC
+        OUTBOX_TABLE --> ATOMIC
+        OUTBOX_TABLE --> POLL
+        POLL --> BATCH
+        BATCH --> SEND
+        SEND --> KAFKA_CLUSTER
+        KAFKA_CLUSTER --> ACK
+        ACK --> OUTBOX_TABLE
+        SEND -.->|Failure| RETRY
+        RETRY -.->|Max Retries| DLQ
+    end
+
+    subgraph KAFKA_CLUSTER ["Kafka Cluster (3 Brokers, RF=3)"]
+        direction TB
+        BROKER1[Broker 1]
+        BROKER2[Broker 2]
+        BROKER3[Broker 3]
+        CONTROLLER[KRaft Controller]
+
+        BROKER1 <--> BROKER2
+        BROKER2 <--> BROKER3
+        BROKER3 <--> BROKER1
+        CONTROLLER --> BROKER1
+        CONTROLLER --> BROKER2
+        CONTROLLER --> BROKER3
+    end
+
+    subgraph TOPICS ["Kafka Topics (3 Partitions Each)"]
+        direction LR
+        T1[transfer-requested-topic]
+        T2[debit-success-topic]
+        T3[debit-failed-topic]
+        T4[credit-success-topic]
+        T5[credit-failed-topic]
+        T6[reversal-topic]
+        T7[reversal-success-topic]
+        T8[account-events-topic]
+        T9[kyc-topic]
+        T10[otp-verification-topic]
+        T11[journal-posted-topic]
+        TDLQ[*_dlq (Dead Letter)]
+    end
+
+    subgraph CONSUMERS ["Kafka Consumers (Consumer Groups)"]
+        direction TB
+
+        subgraph ACCOUNT_CONSUMERS ["Account Service Consumers"]
+            DC[DebitConsumer\ngroup: account-service-debit\n← transfer-requested-topic]
+            CC[CreditConsumer\ngroup: account-service-credit\n← debit-success-topic]
+            RC[ReversalConsumer\ngroup: account-service-reversal\n← reversal-topic]
+        end
+
+        subgraph TRANSACTION_CONSUMERS ["Transaction Service Consumers"]
+            TEC[TransactionEventConsumer\ngroup: transaction-service-events\n← credit-success-topic\n← reversal-success-topic]
+            TFC[TransactionFailureConsumer\ngroup: transaction-service-failures\n← credit-failed-topic\n← debit-failed-topic]
+        end
+
+        subgraph NOTIFICATION_CONSUMERS ["Notification Service Consumers"]
+            NC[NotificationConsumer\ngroup: notification-service\n← credit-success-topic\n← credit-failed-topic\n← reversal-success-topic\n← kyc-topic\n← otp-verification-topic]
+        end
+
+        subgraph LEDGER_CONSUMERS ["Ledger Service Consumers (Planned)"]
+            LC[LedgerConsumer\ngroup: ledger-service\n← account-events-topic\n← debit-success-topic\n← credit-success-topic\n← reversal-success-topic]
+        end
+    end
+
+    subgraph CONSUMER_PROCESSING ["Consumer Processing Logic"]
+        direction TB
+        CONSUME[Consume Record\nDeserialize Payload]
+        IDEMPOTENCY[Idempotency Check\nStatus in DB\nAlready Processed?]
+        PROCESS[Business Logic\nDebit, Credit, Notify]
+        OUTBOX_CONSUMER[Produce Next Event\nvia Outbox Pattern]
+        COMMIT_OFFSET[Commit Offset\nOnly After Success]
+        ERROR_HANDLING[Error: Nack/Retry\nDLQ After Max Retries]
+    end
+
+    subgraph SERIALIZATION ["Serialization Strategy"]
+        STRING_SER[StringSerializer\nProducer: JSON String\nConsumer: JSON String]
+        WHY_STRING[Why StringSerializer?\n• Avoids double encoding\n• Spring Kafka default\n  StringDeserializer\n• Payload already JSON\n  from Outbox]
+    end
+
+    subgraph CONSUMER_CONFIG ["Critical Consumer Config"]
+        CONF1[enable.auto.commit: false\nManual commit after processing]
+        CONF2[max.poll.interval.ms: 300000\n5 min max processing time]
+        CONF3[session.timeout.ms: 10000\nHeartbeat interval: 3000]
+        CONF4[isolation.level: read_committed\nTransactional producers]
+        CONF5[auto.offset.reset: earliest\nNew consumers read from start]
+    end
+
+    %% Connections
+    KAFKA_CLUSTER --> TOPICS
+
+    T1 --> DC
+    T2 --> CC
+    T3 --> TFC
+    T4 --> TEC
+    T4 --> CC
+    T4 --> NC
+    T5 --> TFC
+    T5 --> NC
+    T6 --> RC
+    T7 --> TEC
+    T7 --> NC
+    T8 -.-> LC
+    T9 --> NC
+    T10 --> NC
+    T11 -.-> LC
+
+    DC --> CONSUME
+    CC --> CONSUME
+    RC --> CONSUME
+    TEC --> CONSUME
+    TFC --> CONSUME
+    NC --> CONSUME
+    LC -.-> CONSUME
+
+    CONSUME --> IDEMPOTENCY
+    IDEMPOTENCY -->|Not Processed| PROCESS
+    IDEMPOTENCY -->|Already Done| COMMIT_OFFSET
+    PROCESS --> OUTBOX_CONSUMER
+    OUTBOX_CONSUMER --> COMMIT_OFFSET
+    PROCESS -.->|Error| ERROR_HANDLING
+    ERROR_HANDLING -.->|Retry| CONSUME
+    ERROR_HANDLING -.->|Max Retries| TDLQ
+
+    STRING_SER --> WHY_STRING
+
+    classDef outbox fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef kafka fill:#fff7ed,stroke:#ea580c,stroke-width:2px;
+    classDef topics fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef consumers fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef processing fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+    classDef config fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef serialization fill:#f3f4f6,stroke:#9ca3af,stroke-width:2px;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+
+    class OUTBOX_PATTERN,APPLICATION,DATABASE,PUBLISHER,APP_LOGIC,APP_DB,BIZ_TABLE,OUTBOX_TABLE,ATOMIC,POLL,BATCH,SEND,ACK,RETRY,DLQ outbox;
+    class KAFKA_CLUSTER,BROKER1,BROKER2,BROKER3,CONTROLLER kafka;
+    class TOPICS,T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,TDLQ topics;
+    class CONSUMERS,ACCOUNT_CONSUMERS,TRANSACTION_CONSUMERS,NOTIFICATION_CONSUMERS,LEDGER_CONSUMERS,DC,CC,RC,TEC,TFC,NC,LC consumers;
+    class CONSUMER_PROCESSING,CONSUME,IDEMPOTENCY,PROCESS,OUTBOX_CONSUMER,COMMIT_OFFSET,ERROR_HANDLING processing;
+    class SERIALIZATION,STRING_SER,WHY_STRING serialization;
+    class CONSUMER_CONFIG,CONF1,CONF2,CONF3,CONF4,CONF5 config;
+    class LEDGER_CONSUMERS,LC planned;

@@ -1,0 +1,198 @@
+%% CitiCore AWS and Kubernetes Deployment Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+flowchart TB
+    subgraph AWS_REGION_PRIMARY ["Primary Region (e.g., ap-south-1)"]
+        direction TB
+
+        subgraph EDGE_AWS ["Edge Services"]
+            ROUTE53[Route 53\nDNS + Health Checks]
+            CLOUDFRONT[CloudFront CDN\nWAF Integration\nEdge Caching]
+            ALB[Application Load Balancer\nTLS Termination\nWAF Attached]
+        end
+
+        subgraph EKS_CLUSTER ["EKS Cluster (citicore-prod)"]
+            direction TB
+
+            subgraph SYSTEM_NS ["kube-system"]
+                CNI[VPC CNI\nPod Networking]
+                COREDNS[CoreDNS\nService Discovery]
+                METRICS[Metrics Server\nHPA Metrics]
+                EBS_CSI[EBS CSI Driver\nPersistent Volumes]
+            end
+
+            subgraph INGRESS_NS ["ingress-nginx"]
+                NGINX_ING[NGINX Ingress Controller\nTLS Termination\nRate Limiting\nCanary Deployments]
+            end
+
+            subgraph CITICORE_NS ["Namespace: citicore-prod"]
+                direction TB
+
+                subgraph GATEWAY_DEP ["Gateway"]
+                    GW_DEP[Deployment: api-gateway\nReplicas: 3\nResources: 250m/1000m CPU\n512Mi/1Gi Mem\nHPA: CPU 70%\nPDB: minAvailable 2]
+                    GW_SVC[Service: api-gateway\nClusterIP: 8080]
+                end
+
+                subgraph CORE_DEP ["Core Banking Services"]
+                    AUTH_DEP[Deployment: auth-service\nReplicas: 3\nHPA: CPU 70%\nPDB: minAvailable 2]
+                    USER_DEP[Deployment: user-service\nReplicas: 3\nHPA: CPU 70%\nPDB: minAvailable 2]
+                    ACC_DEP[Deployment: account-service\nReplicas: 5\nHPA: CPU 70%, Mem 80%\nPDB: minAvailable 3]
+                    TXN_DEP[Deployment: transaction-service\nReplicas: 3\nHPA: CPU 70%\nPDB: minAvailable 2]
+                    NOTIF_DEP[Deployment: notification-service\nReplicas: 2\nHPA: CPU 70%\nPDB: minAvailable 1]
+                    LEDGER_DEP[Deployment: ledger-service\nReplicas: 2\nHPA: CPU 70%\nPDB: minAvailable 1]
+                end
+
+                subgraph PLATFORM_DEP ["Platform Services"]
+                    EUREKA_DEP[Deployment: eureka-server\nReplicas: 2\nNo HPA\nPDB: minAvailable 1]
+                    CONFIG_DEP[Deployment: config-server\nReplicas: 2\nNo HPA\nPDB: minAvailable 1]
+                end
+
+                GW_SVC --> GW_DEP
+                GW_DEP --> AUTH_DEP
+                GW_DEP --> USER_DEP
+                GW_DEP --> ACC_DEP
+                GW_DEP --> TXN_DEP
+                GW_DEP --> NOTIF_DEP
+                GW_DEP -.-> LEDGER_DEP
+
+                AUTH_DEP --> EUREKA_DEP
+                USER_DEP --> EUREKA_DEP
+                ACC_DEP --> EUREKA_DEP
+                TXN_DEP --> EUREKA_DEP
+                NOTIF_DEP --> EUREKA_DEP
+                LEDGER_DEP --> EUREKA_DEP
+                EUREKA_DEP --> CONFIG_DEP
+            end
+
+            subgraph DATA_NS ["Namespace: data-layer"]
+                direction TB
+                MYSQL_PRIMARY[MySQL Primary\nStatefulSet: 1\nInstance: db.r6g.xlarge\nStorage: 500Gi gp3\nMulti-AZ: Yes]
+                MYSQL_REPLICA[MySQL Replicas\nStatefulSet: 2\nInstance: db.r6g.large\nRead-Only Endpoint]
+                REDIS_CLUSTER[ElastiCache Redis\nCluster Mode: 6 Nodes\n3 Shards, 2 Replicas\nInstance: cache.r6g.large]
+                MSK_KAFKA[Amazon MSK\n3 Broker Nodes\nInstance: kafka.m7g.large\nStorage: 200Gi/broker\nRF=3, minISR=2]
+            end
+
+            subgraph OBS_NS ["Namespace: observability"]
+                PROM_OP[Prometheus Operator\nServiceMonitors\nRule Evaluation]
+                GRAF[Grafana\nDashboards + Alerting]
+                LOKI[Loki + Promtail\nLog Aggregation\n30d Retention]
+                TEMPO[Tempo/Jaeger\nDistributed Traces\n7d Retention]
+                ALERT_MGR[Alertmanager\nRoutes + Inhibitions\nSlack/PagerDuty]
+            end
+
+            subgraph SEC_NS ["Namespace: security"]
+                VAULT[HashiCorp Vault\nHA Mode (3 Replicas)\nAuto-Unseal: KMS\nDynamic Secrets]
+                CERT_MGR[cert-manager\nLet's Encrypt / Private CA\nCertificate Rotation]
+                EXT_SECRETS[External Secrets Operator\nVault → K8s Secrets Sync]
+            end
+        end
+
+        subgraph DATA_SERVICES ["Managed Data Services"]
+            S3_KYC[S3 Bucket: citicore-kyc-prod\nVersioning Enabled\nSSE-KMS Encryption\nLifecycle: Glacier after 90d\nCross-Region Replication]
+            S3_BACKUP[S3 Bucket: citicore-backups-prod\nXtraBackup Files\nEncrypted\nCross-Region Replication]
+            SECRETS_MGR[AWS Secrets Manager\nDB Passwords\nAPI Keys\nRotation Lambda]
+        end
+
+        subgraph NETWORKING ["VPC Networking"]
+            VPC[VPC: 10.0.0.0/16\nMulti-AZ (3 AZs)]
+            PUBLIC_SUBNETS[Public Subnets\nALB, NAT Gateways\nBastion Hosts]
+            PRIVATE_SUBNETS[Private Subnets\nEKS Nodes, RDS, ElastiCache, MSK]
+            DATA_SUBNETS[Data Subnets\nRDS, ElastiCache, MSK\nNo Internet Access]
+            NAT_GW[NAT Gateways\n1 per AZ\nHigh Availability]
+            TGW[Transit Gateway\nInter-Region Peering\nOn-Prem Connectivity]
+            VPCE[VPC Endpoints\nS3, DynamoDB, Secrets Manager\nNo Internet Required]
+        end
+    end
+
+    subgraph AWS_REGION_DR ["DR Region (e.g., ap-southeast-1)"]
+        DR_EKS[EKS Cluster: citicore-dr\nWarm Standby\nScaled to 0\nAuto-scale on Failover]
+        DR_MYSQL[RDS Read Replica\nCross-Region\nPromotable to Primary]
+        DR_MSK[MSK MirrorMaker\nCross-Region Replication\nNear-Zero RPO]
+        DR_S3[S3 Cross-Region Replication\nAutomatic\nKYC + Backups]
+    end
+
+    subgraph CI_CD ["CI/CD Pipeline (GitHub Actions)"]
+        BUILD[Build & Test\nMaven, Testcontainers\nCodeQL, SpotBugs, PMD\nDependency Check]
+        CONTAINER[Container Build\nMulti-stage Dockerfile\nNon-root User\nTrivy Scan]
+        REGISTRY[GHCR / ECR\nImage Tag: git-sha\nCosign Signing]
+        DEPLOY_STAGING[Deploy to Staging\nHelm + ArgoCD\nNamespace: citicore-staging]
+        TEST_STAGING[Integration Tests\nNewman/Postman\nPerformance: k6]
+        APPROVE[Manual Approval\nProduction Gate]
+        DEPLOY_PROD[Deploy to Production\nBlue-Green / Canary\nArgoCD Sync]
+        VERIFY[Health Verification\nSmoke Tests\nAuto-Rollback on Failure]
+    end
+
+    %% External connections
+    USERS[Users] --> ROUTE53
+    ADMINS[Admins] --> ROUTE53
+    ROUTE53 --> CLOUDFRONT
+    CLOUDFRONT --> ALB
+    ALB --> NGINX_ING
+    NGINX_ING --> GW_SVC
+
+    %% Network connections
+    VPC --> PUBLIC_SUBNETS
+    VPC --> PRIVATE_SUBNETS
+    VPC --> DATA_SUBNETS
+    PUBLIC_SUBNETS --> NAT_GW
+    PRIVATE_SUBNETS --> NAT_GW
+    DATA_SUBNETS --> VPCE
+    VPC --> TGW
+
+    %% Data connections
+    ACC_DEP --> MYSQL_PRIMARY
+    ACC_DEP --> MYSQL_REPLICA
+    ACC_DEP --> REDIS_CLUSTER
+    AUTH_DEP --> MYSQL_PRIMARY
+    USER_DEP --> MYSQL_PRIMARY
+    TXN_DEP --> MYSQL_PRIMARY
+    LEDGER_DEP -.-> MYSQL_PRIMARY
+    ALL_SVCS[All Services] --> MSK_KAFKA
+    USER_DEP --> S3_KYC
+    BACKUP_JOB[Backup CronJob] --> S3_BACKUP
+    DR_MYSQL -.->|Async Replication| MYSQL_PRIMARY
+    DR_MSK -.->|MirrorMaker| MSK_KAFKA
+    DR_S3 -.->|CRR| S3_KYC
+    DR_S3 -.->|CRR| S3_BACKUP
+
+    %% Security connections
+    ALL_SVCS --> VAULT
+    ALL_SVCS --> EXT_SECRETS
+    VAULT --> SECRETS_MGR
+    CERT_MGR --> ALB
+    CERT_MGR --> NGINX_ING
+
+    %% Observability connections
+    ALL_SVCS --> PROM_OP
+    ALL_SVCS --> LOKI
+    ALL_SVCS --> TEMPO
+    PROM_OP --> ALERT_MGR
+    ALERT_MGR --> SLACK[Slack / PagerDuty]
+
+    %% CI/CD connections
+    BUILD --> CONTAINER
+    CONTAINER --> REGISTRY
+    REGISTRY --> DEPLOY_STAGING
+    DEPLOY_STAGING --> TEST_STAGING
+    TEST_STAGING --> APPROVE
+    APPROVE --> DEPLOY_PROD
+    DEPLOY_PROD --> VERIFY
+
+    classDef aws fill:#fff7ed,stroke:#ea580c,stroke-width:2px;
+    classDef eks fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef ns fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef deploy fill:#ede9fe,stroke:#7c3aed,stroke-width:2px;
+    classDef data fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef net fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef dr fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+    classDef cicd fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+
+    class AWS_REGION_PRIMARY,EDGE_AWS,EKS_CLUSTER,DATA_SERVICES,NETWORKING aws;
+    class ROUTE53,CLOUDFRONT,ALB,EDGE_AWS edge;
+    class EKS_CLUSTER,SYSTEM_NS,INGRESS_NS,CITICORE_NS,DATA_NS,OBS_NS,SEC_NS eks;
+    class GW_DEP,GW_SVC,AUTH_DEP,USER_DEP,ACC_DEP,TXN_DEP,NOTIF_DEP,LEDGER_DEP,EUREKA_DEP,CONFIG_DEP,GATEWAY_DEP,CORE_DEP,PLATFORM_DEP ns;
+    class MYSQL_PRIMARY,MYSQL_REPLICA,REDIS_CLUSTER,MSK_KAFKA,S3_KYC,S3_BACKUP,SECRETS_MGR,DATA_SERVICES data;
+    class VPC,PUBLIC_SUBNETS,PRIVATE_SUBNETS,DATA_SUBNETS,NAT_GW,TGW,VPCE,NETWORKING net;
+    class AWS_REGION_DR,DR_EKS,DR_MYSQL,DR_MSK,DR_S3 dr;
+    class CI_CD,BUILD,CONTAINER,REGISTRY,DEPLOY_STAGING,TEST_STAGING,APPROVE,DEPLOY_PROD,VERIFY cicd;
+    class LEDGER_DEP planned;

@@ -1,0 +1,110 @@
+%% CitiCore Overall System Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'edgeLabelBackground': '#f8fafc', 'fontSize': '12px'}}}%%
+graph TB
+    subgraph EXTERNAL ["External Clients"]
+        direction TB
+        CLIENT[Web/Mobile App]
+        ADMIN[Admin Portal]
+        EXT_API[External APIs]
+    end
+
+    subgraph EDGE ["Edge Layer"]
+        GW[API Gateway<br/>Port 8080<br/>Spring Cloud Gateway<br/>Resilience4j + Redis Rate Limiting]
+    end
+
+    subgraph PLATFORM ["Platform Services"]
+        direction TB
+        EUREKA[Eureka Server<br/>Port 8761<br/>Service Discovery]
+        CONFIG[Config Server<br/>Port 8888<br/>Centralized Config]
+    end
+
+    subgraph CORE ["Core Banking Services"]
+        direction TB
+        AUTH[Auth Service<br/>Port 8081<br/>Identity & Access]
+        USER[User Service<br/>Port 8082<br/>Profile & KYC]
+        ACC[Account Service<br/>Port 8083<br/>Accounts & Ledger]
+        TXN[Transaction Service<br/>Port 8084<br/>Transfers & Saga]
+        NOTIF[Notification Service<br/>Port 8085<br/>Multi-channel Alerts]
+        LEDGER[Ledger Service<br/>Port 8086<br/>Double-Entry GL<br/><i>Planned</i>]
+    end
+
+    subgraph DATA ["Data & Messaging Layer"]
+        direction TB
+        MYSQL[(MySQL 8.0<br/>Multi-Database<br/>Auth / Account / Txn / User / Ledger)]
+        REDIS[(Redis 7<br/>Cache & Rate Limiting<br/>Balance Cache 5min TTL)]
+        KAFKA[Kafka 3.8<br/>Event Bus<br/>3 Partitions, RF=3]
+        S3[(AWS S3<br/>KYC Documents<br/>SSE-KMS Encryption)]
+    end
+
+    %% External to Gateway
+    CLIENT -->|HTTPS| GW
+    ADMIN -->|HTTPS| GW
+    EXT_API -->|HTTPS| GW
+
+    %% Gateway to Platform
+    GW -->|Service Discovery| EUREKA
+    GW -->|Config Refresh| CONFIG
+
+    %% Gateway to Services
+    GW -->|Route /auth/**| AUTH
+    GW -->|Route /users/**| USER
+    GW -->|Route /accounts/**| ACC
+    GW -->|Route /transactions/**| TXN
+    GW -.->|Route /ledger/**| LEDGER
+
+    %% Service to Platform
+    AUTH --> EUREKA
+    AUTH --> CONFIG
+    USER --> EUREKA
+    USER --> CONFIG
+    ACC --> EUREKA
+    ACC --> CONFIG
+    TXN --> EUREKA
+    TXN --> CONFIG
+    NOTIF --> EUREKA
+    NOTIF --> CONFIG
+    LEDGER -.-> EUREKA
+    LEDGER -.-> CONFIG
+
+    %% Service to Data
+    AUTH -->|citicore_authdb| MYSQL
+    AUTH -->|OTP Events| KAFKA
+    AUTH -->|Rate Limit| REDIS
+
+    USER -->|citicore_userdb| MYSQL
+    USER -->|KYC Events| KAFKA
+    USER -->|Documents| S3
+
+    ACC -->|citicore_account| MYSQL
+    ACC -->|Primary Writes| MYSQL
+    ACC -->|Replica Reads| MYSQL
+    ACC -->|Balance Cache| REDIS
+    ACC -->|Saga Events| KAFKA
+
+    TXN -->|citicore_transactiondb| MYSQL
+    TXN -->|Saga Events| KAFKA
+
+    NOTIF -->|Consumes Events| KAFKA
+
+    LEDGER -.->|citicore_ledgerdb| MYSQL
+    LEDGER -.->|Journal Events| KAFKA
+
+    %% Cross-service Feign
+    ACC -.->|Feign: KYC Check| USER
+    TXN -.->|Feign: Validate Transfer| ACC
+    LEDGER -.->|Feign: Account/Txn Data| ACC
+    LEDGER -.->|Feign: Account/Txn Data| TXN
+
+    classDef external fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+    classDef edge fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef platform fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef core fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef data fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+
+    class CLIENT,ADMIN,EXT_API external;
+    class GW edge;
+    class EUREKA,CONFIG platform;
+    class AUTH,USER,ACC,TXN,NOTIF core;
+    class LEDGER planned;
+    class MYSQL,REDIS,KAFKA,S3 data;

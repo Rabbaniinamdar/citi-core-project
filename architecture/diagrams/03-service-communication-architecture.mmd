@@ -1,0 +1,100 @@
+%% CitiCore Service Communication Architecture
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+graph TB
+    subgraph SYNC ["Synchronous Communication (Feign/REST)"]
+        direction TB
+
+        subgraph CLIENTS ["External Clients"]
+            WEB[Web App]
+            MOBILE[Mobile App]
+            ADMIN_P[Admin Portal]
+        end
+
+        GW[API Gateway<br/>Port 8080<br/>Spring Cloud Gateway]
+
+        subgraph FEIGN_CALLS ["Feign Client Calls"]
+            direction LR
+            TXN_TO_ACC[Transaction Service<br/>→ AccountFeignClient<br/>validateTransfer()]
+            ACC_TO_USER[Account Service<br/>→ UserClient<br/>getKycStatus()]
+            LEDGER_TO_ACC[Ledger Service<br/>→ AccountFeignClient<br/>getAccountDetails()]
+            LEDGER_TO_TXN[Ledger Service<br/>→ TransactionFeignClient<br/>getTransactionDetails()]
+        end
+
+        WEB --> GW
+        MOBILE --> GW
+        ADMIN_P --> GW
+
+        GW --> AUTH[Auth Service\nPort 8081]
+        GW --> USER[User Service\nPort 8082]
+        GW --> ACC[Account Service\nPort 8083]
+        GW --> TXN[Transaction Service\nPort 8084]
+        GW --> NOTIF[Notification Service\nPort 8085]
+        GW -.-> LEDGER[Ledger Service\nPort 8086]
+
+        TXN -.->|Feign| TXN_TO_ACC
+        ACC -.->|Feign| ACC_TO_USER
+        LEDGER -.->|Feign| LEDGER_TO_ACC
+        LEDGER -.->|Feign| LEDGER_TO_TXN
+    end
+
+    subgraph ASYNC ["Asynchronous Communication (Kafka)"]
+        direction TB
+
+        KAFKA[(Kafka Cluster<br/>3 Brokers, RF=3<br/>3 Partitions/Topic)]
+
+        subgraph PRODUCERS ["Event Producers"]
+            AUTH_PROD[Auth Service\n→ otp-verification-topic]
+            USER_PROD[User Service\n→ kyc-topic]
+            ACC_PROD[Account Service\n→ account-events-topic\n→ debit-success-topic\n→ debit-failed-topic\n→ credit-success-topic\n→ credit-failed-topic\n→ reversal-success-topic]
+            TXN_PROD[Transaction Service\n→ transfer-requested-topic]
+            LEDGER_PROD[Ledger Service\n→ journal-posted-topic]
+        end
+
+        subgraph CONSUMERS ["Event Consumers"]
+            ACC_CONS[Account Service\n← transfer-requested-topic (DebitConsumer)\n← debit-success-topic (CreditConsumer)\n← reversal-topic (ReversalConsumer)]
+            TXN_CONS[Transaction Service\n← credit-success-topic\n← credit-failed-topic\n← reversal-success-topic]
+            NOTIF_CONS[Notification Service\n← credit-success-topic\n← credit-failed-topic\n← reversal-success-topic\n← kyc-topic\n← otp-verification-topic]
+            LEDGER_CONS[Ledger Service\n← account-events-topic\n← debit-success-topic\n← credit-success-topic\n← reversal-success-topic]
+        end
+
+        AUTH_PROD --> KAFKA
+        USER_PROD --> KAFKA
+        ACC_PROD --> KAFKA
+        TXN_PROD --> KAFKA
+        LEDGER_PROD -.-> KAFKA
+
+        KAFKA --> ACC_CONS
+        KAFKA --> TXN_CONS
+        KAFKA --> NOTIF_CONS
+        KAFKA -.-> LEDGER_CONS
+    end
+
+    subgraph OUTBOX ["Transactional Outbox Pattern"]
+        direction TB
+        OUTBOX_DB[(Outbox Tables\naccount_outbox, outbox_events)]
+        OUTBOX_PUB[OutboxPublisher<br/>Poll: 5s, Batch: 100<br/>StringSerializer]
+        OUTBOX_DB --> OUTBOX_PUB
+        OUTBOX_PUB --> KAFKA
+    end
+
+    subgraph RESILIENCE ["Resilience Patterns"]
+        direction TB
+        CB[Circuit Breaker<br/>Resilience4j<br/>Feign Clients]
+        RL[Rate Limiting<br/>Redis Token Bucket<br/>Gateway + Auth]
+        RT[Retry<br/>Spring Retry<br/>Exponential Backoff]
+        TO[Timeouts<br/>Feign: 3s/5s<br/>Kafka: 30s/10s]
+        BH[Bulkhead<br/>Not Implemented]
+    end
+
+    %% Styling
+    classDef sync fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef async fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef outbox fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef resilience fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+
+    class SYNC,CLIENTS,GW,FEIGN_CALLS,TXN_TO_ACC,ACC_TO_USER,LEDGER_TO_ACC,LEDGER_TO_TXN,AUTH,USER,ACC,TXN,NOTIF sync;
+    class LEDGER planned;
+    class ASYNC,KAFKA,PRODUCERS,CONSUMERS,AUTH_PROD,USER_PROD,ACC_PROD,TXN_PROD,LEDGER_PROD,ACC_CONS,TXN_CONS,NOTIF_CONS,LEDGER_CONS async;
+    class OUTBOX,OUTBOX_DB,OUTBOX_PUB outbox;
+    class RESILIENCE,CB,RL,RT,TO,BH resilience;

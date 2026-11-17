@@ -1,0 +1,114 @@
+%% CitiCore Customer Onboarding Workflow
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+flowchart TD
+    START([Customer Visits App\nDownloads Mobile App]) --> REGISTER
+
+    subgraph REGISTRATION ["1. Registration & Email Verification"]
+        REGISTER[POST /api/v1/auth/register\n{email, password, phone}]
+        VALIDATE_REG{Valid Input?\nEmail format, password policy}
+        VALIDATE_REG -->|No| ERR_REG[Return 400: Validation Error\nDetails in response]
+        VALIDATE_REG -->|Yes| CHECK_EXISTS{Email Exists?}
+        CHECK_EXISTS -->|Yes| ERR_EXISTS[Return 409: Email Already Registered]
+        CHECK_EXISTS -->|No| CREATE_USER[Create User Entity\nstatus=PENDING, emailVerified=false]
+        CREATE_USER --> GEN_OTP[Generate 8-char Alphanumeric OTP\n36^8 = 2.8T combinations]
+        GEN_OTP --> SAVE_OTP[Save OTP to User\nExpires in 10 minutes]
+        SAVE_OTP --> PUBLISH_OTP[Publish to otp-verification-topic\nVerificationOtpEvent]
+        PUBLISH_OTP --> KAFKA_OTP[(Kafka: otp-verification-topic)]
+        KAFKA_OTP --> NOTIF_OTP[Notification Service Consumes]
+        NOTIF_OTP --> EMAIL_OTP[Send HTML Email via SMTP/SendGrid]
+        EMAIL_OTP --> RETURN_REG[Return 201: Registration Initiated\nCheck email for OTP]
+    end
+
+    subgraph VERIFICATION ["2. Email Verification"]
+        RETURN_REG --> ENTER_OTP[Customer Enters OTP in App]
+        ENTER_OTP --> VERIFY_API[POST /api/v1/auth/verify\n{email, code}]
+        VERIFY_API --> CHECK_OTP{OTP Valid?\nMatch, Not Expired, Not Used}
+        CHECK_OTP -->|No| ERR_OTP[Return 400: Invalid/Expired OTP]
+        CHECK_OTP -->|Yes| ACTIVATE_USER[Update User:\nstatus=ACTIVE, emailVerified=true]
+        ACTIVATE_USER --> CLEAR_OTP[Clear OTP Fields]
+        CLEAR_OTP --> ISSUE_TOKENS[Generate JWT Pair\nAccess: 15min, Refresh: 7day]
+        ISSUE_TOKENS --> STORE_REFRESH[Store Refresh Token in DB\nRevoke any existing]
+        STORE_REFRESH --> RETURN_TOKENS[Return 200 OK\n{accessToken, refreshToken}]
+    end
+
+    subgraph PROFILE ["3. Profile Completion"]
+        RETURN_TOKENS --> PROFILE_UI[Customer Completes Profile]
+        PROFILE_UI --> PROFILE_API[POST /api/v1/users/profile\n{firstName, lastName, phone,\naddress, DOB, etc.}]
+        PROFILE_API --> VALIDATE_PROF{Valid Profile Data?}
+        VALIDATE_PROF -->|No| ERR_PROF[Return 400: Validation Error]
+        VALIDATE_PROF -->|Yes| SAVE_PROFILE[Create UserProfile\nkycStatus=PENDING]
+        SAVE_PROFILE --> RETURN_PROFILE[Return 201: Profile Created]
+    end
+
+    subgraph KYC ["4. KYC Verification"]
+        RETURN_PROFILE --> KYC_UPLOAD[Customer Uploads KYC Documents\nPOST /api/v1/users/kyc/upload\n{type: PAN/AADHAAR/PASSPORT,\nfile: multipart}]
+        KYC_UPLOAD --> VALIDATE_FILE{Valid File?\nType, Size < 10MB}
+        VALIDATE_FILE -->|No| ERR_FILE[Return 400: Invalid File]
+        VALIDATE_FILE -->|Yes| UPLOAD_S3[Upload to AWS S3\nSSE-KMS Encrypted]
+        UPLOAD_S3 --> SAVE_KYC_META[Save KycDocument Metadata\ns3Key, fileName, contentType, size]
+        SAVE_KYC_META --> UPDATE_KYC_STATUS[Update UserProfile\nkycStatus=UNDER_REVIEW]
+        UPDATE_KYC_STATUS --> PUBLISH_KYC[Publish to kyc-topic\nKycEvent: KYC_SUBMITTED]
+        PUBLISH_KYC --> KAFKA_KYC[(Kafka: kyc-topic)]
+        KAFKA_KYC --> NOTIF_KYC_SUB[Notification Service: KYC Submitted Email]
+
+        NOTIF_KYC_SUB --> ADMIN_REVIEW[Admin Reviews KYC\nGET /api/v1/users/admin/kyc/pending]
+        ADMIN_REVIEW --> ADMIN_DECISION{Approve or Reject?}
+
+        ADMIN_DECISION -->|Reject| REJECT_KYC[PUT /api/v1/users/admin/kyc/{id}/reject\n{reason}]
+        REJECT_KYC --> UPDATE_REJECT[kycStatus=REJECTED]
+        UPDATE_REJECT --> PUBLISH_REJECT[KycEvent: KYC_REJECTED]
+        PUBLISH_REJECT --> NOTIF_REJECT[Notification: KYC Rejected Email]
+
+        ADMIN_DECISION -->|Approve| APPROVE_KYC[PUT /api/v1/users/admin/kyc/{id}/approve]
+        APPROVE_KYC --> UPDATE_APPROVE[kycStatus=APPROVED]
+        UPDATE_APPROVE --> PUBLISH_APPROVE[KycEvent: KYC_APPROVED]
+        PUBLISH_APPROVE --> NOTIF_APPROVE[Notification: KYC Approved Email]
+    end
+
+    subgraph ACCOUNT_CREATION ["5. Account Creation"]
+        NOTIF_APPROVE --> CREATE_ACC_UI[Customer Creates Account\nPOST /api/v1/accounts/create\n{type: SAVINGS/CURRENT}]
+        CREATE_ACC_UI --> KYC_CHECK[Account Service: Feign getKycStatus(userId)]
+        KYC_CHECK --> USER_KYC[User Service: Returns KYC Status]
+        USER_KYC --> KYC_VERIFIED{KYC Approved?}
+        KYC_VERIFIED -->|No| ERR_KYC[Return 400: KYC Required\nComplete KYC First]
+        KYC_VERIFIED -->|Yes| GEN_ACC_NUM[Generate Account Number\nCITI + 12-digit Sequence]
+        GEN_ACC_NUM --> CREATE_ACC_DB[Create Account Entity\nbalance=0, status=ACTIVE]
+        CREATE_ACC_DB --> SET_DEFAULT[Set as Default if First Account]
+        SET_DEFAULT --> PUBLISH_ACC_CREATED[Publish to account-events-topic\nAccountEvent: ACCOUNT_CREATED]
+        PUBLISH_ACC_CREATED --> KAFKA_ACC[(Kafka: account-events-topic)]
+        KAFKA_ACC --> LEDGER_POST[Ledger Service: Post Journal Entry]
+        LEDGER_POST --> LEDGER_DB[(citicore_ledgerdb)]
+        LEDGER_POST --> JOURNAL_ENTRY[Journal Entry:\nDebit: 1000-Cash\nCredit: 2000-{accNo}-Customer Deposits]
+        JOURNAL_ENTRY --> RETURN_ACC[Return 201: Account Created\n{accountNumber, type, balance}]
+    end
+
+    subgraph ONBOARDING_COMPLETE ["6. Onboarding Complete"]
+        RETURN_ACC --> WELCOME[Welcome Screen\nShow Account Details]
+        WELCOME --> NEXT_STEPS[Next Steps:\n- Set up MFA\n- Add beneficiary\n- Make first deposit\n- Download app]
+        NEXT_STEPS --> END([Customer Onboarded Successfully])
+    end
+
+    %% Error paths
+    ERR_REG --> START
+    ERR_EXISTS --> START
+    ERR_OTP --> ENTER_OTP
+    ERR_PROF --> PROFILE_UI
+    ERR_FILE --> KYC_UPLOAD
+    ERR_KYC --> CREATE_ACC_UI
+    NOTIF_REJECT --> KYC_UPLOAD
+
+    classDef step fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+    classDef decision fill:#fce7f3,stroke:#db2777,stroke-width:2px;
+    classDef error fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    classDef kafka fill:#fef3c7,stroke:#f59e0b,stroke-width:2px;
+    classDef db fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+    classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 5 5;
+    classDef success fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+
+    class REGISTER,VALIDATE_REG,CHECK_EXISTS,CREATE_USER,GEN_OTP,SAVE_OTP,PUBLISH_OTP,RETURN_REG,ENTER_OTP,VERIFY_API,CHECK_OTP,ACTIVATE_USER,CLEAR_OTP,ISSUE_TOKENS,STORE_REFRESH,RETURN_TOKENS,PROFILE_UI,PROFILE_API,VALIDATE_PROF,SAVE_PROFILE,RETURN_PROFILE,KYC_UPLOAD,VALIDATE_FILE,UPLOAD_S3,SAVE_KYC_META,UPDATE_KYC_STATUS,PUBLISH_KYC,ADMIN_REVIEW,ADMIN_DECISION,REJECT_KYC,UPDATE_REJECT,PUBLISH_REJECT,APPROVE_KYC,UPDATE_APPROVE,PUBLISH_APPROVE,CREATE_ACC_UI,KYC_CHECK,USER_KYC,KYC_VERIFIED,GEN_ACC_NUM,CREATE_ACC_DB,SET_DEFAULT,PUBLISH_ACC_CREATED,LEDGER_POST,JOURNAL_ENTRY,RETURN_ACC,WELCOME,NEXT_STEPS step;
+    class CHECK_EXISTS,CHECK_OTP,KYC_VERIFIED,ADMIN_DECISION,VALIDATE_REG,VALIDATE_PROF,VALIDATE_FILE decision;
+    class ERR_REG,ERR_EXISTS,ERR_OTP,ERR_PROF,ERR_FILE,ERR_KYC error;
+    class KAFKA_OTP,KAFKA_KYC,KAFKA_ACC kafka;
+    class SAVE_OTP,ACTIVATE_USER,STORE_REFRESH,SAVE_PROFILE,SAVE_KYC_META,UPDATE_KYC_STATUS,UPDATE_REJECT,UPDATE_APPROVE,CREATE_ACC_DB,LEDGER_DB db;
+    class LEDGER_POST,JOURNAL_ENTRY,LEDGER_DB planned;
+    class RETURN_ACC,END success;
