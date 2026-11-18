@@ -1,0 +1,50 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+sequenceDiagram
+    participant User
+    participant Client
+    participant GW as API Gateway
+    participant AUTH as Auth Service
+    participant KYC as KYC Workflow Service
+    participant REDIS as Redis Cache
+    participant DB as Database
+
+    Note over User,DB: 1. Login & Token Generation
+    User->>Client: Credentials + MFA
+    Client->>GW: POST /auth/login
+    GW->>AUTH: Forward
+    AUTH->>DB: Validate credentials
+    AUTH->>DB: Fetch UserRole + Permissions
+    AUTH->>AUTH: Compute JWT Claims (roles + permissions + case assignments)
+    AUTH-->>GW: JWT Access + Refresh Token
+    GW-->>Client: Tokens
+
+    Note over User,DB: 2. Resource Access Request
+    Client->>GW: GET /api/v1/kyc/cases/KYC-001\nAuthorization: Bearer <token>
+    GW->>GW: Validate JWT (sig, exp, claims)
+    GW->>GW: Extract roles, permissions, userId
+    GW->>GW: Coarse RBAC: Check endpoint permission
+    GW->>REDIS: Check blocklist
+    REDIS-->>GW: Not blocked
+    GW->>KYC: Forward + Headers\nX-User-Id, X-User-Roles, X-User-Permissions
+
+    Note over User,DB: 3. Service-Level Authorization
+    KYC->>KYC: JwtAuthenticationFilter validates
+    KYC->>KYC: Set SecurityContext
+    KYC->>KYC: @PreAuthorize("hasPermission(#caseId, 'KYC_CASE', 'APPROVE')")
+    KYC->>EVALUATOR: PermissionEvaluator.hasPermission()
+    EVALUATOR->>REDIS: Get cached permissions
+    alt Cache Hit
+        REDIS-->>EVALUATOR: Permissions + Case Assignments
+    else Cache Miss
+        EVALUATOR->>DB: Fetch KycCaseAssignment
+        DB-->>EVALUATOR: Assignment data
+        EVALUATOR->>REDIS: Cache permissions (15min)
+    end
+    EVALUATOR->>EVALUATOR: Check SoD: managerId != reviewingOfficerId
+    EVALUATOR->>EVALUATOR: Check scope: authorizedManagerId == userId
+    EVALUATOR-->>KYC: true/false
+    KYC->>KYC: Execute business logic
+    KYC-->>GW: Response
+    GW-->>Client: Response
+```

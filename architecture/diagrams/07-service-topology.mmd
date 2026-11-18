@@ -1,0 +1,125 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+graph TB
+    subgraph EXTERNAL ["External Clients"]
+        CLIENT[Web/Mobile App]
+        ADMIN[Admin Portal]
+        EXT_API[External APIs]
+    end
+
+    subgraph GATEWAY ["API Gateway Layer"]
+        GW[API Gateway<br/>Port 8080<br/>Spring Cloud Gateway]
+    end
+
+    subgraph DISCOVERY ["Service Discovery & Config"]
+        K8S_DNS[Kubernetes DNS (CoreDNS)<br/>Production Service Discovery]
+        CONFIG[Config Server<br/>Port 8888]
+        EUREKA[Eureka Server<br/>Port 8761<br/><i>Local Development Only</i>]
+    end
+
+    subgraph CORE ["Core Banking Services"]
+        AUTH[Auth Service<br/>Port 8081]
+        USER[User Service<br/>Port 8082]
+        KYC[KYC Workflow Service<br/>Port 8087<br/><b>NEW</b>]
+        ACC[Account Service<br/>Port 8083]
+        TXN[Transaction Service<br/>Port 8084]
+        NOTIF[Notification Service<br/>Port 8085]
+        LEDGER[Ledger Service<br/>Port 8086<br/><i>Planned</i>]
+        COMPLIANCE[Compliance Service<br/>Port 8088<br/><i>Planned</i>]
+    end
+
+    subgraph DATA ["AWS Data Layer"]
+        RDS[(AWS RDS MySQL 8.0<br/>Multi-Schema, KMS Encrypted)]
+        REDIS[(Redis 7<br/>ElastiCache, Cache & Rate Limit)]
+        KAFKA[Kafka 3.8<br/>MSK, Event Bus]
+        S3[(AWS S3<br/>SSE-KMS, KYC Documents)]
+    end
+
+    subgraph SECURITY ["Security Services"]
+        SECRETS[AWS Secrets Manager<br/>DB Credentials, JWT Secret]
+        KMS[AWS KMS<br/>RDS Encryption + Field Encryption]
+    end
+
+    CLIENT --> GW
+    ADMIN --> GW
+    EXT_API --> GW
+
+    GW --> K8S_DNS
+    GW --> CONFIG
+    GW --> AUTH
+    GW --> USER
+    GW --> KYC
+    GW --> ACC
+    GW --> TXN
+    GW --> NOTIF
+    GW -.-> LEDGER
+    GW -.-> COMPLIANCE
+
+    AUTH --> K8S_DNS
+    AUTH --> CONFIG
+    AUTH --> RDS
+    AUTH --> KAFKA
+    AUTH --> REDIS
+    AUTH --> SECRETS
+    AUTH -.-> KMS
+
+    USER --> K8S_DNS
+    USER --> CONFIG
+    USER --> RDS
+    USER --> KAFKA
+    USER --> S3
+    USER --> SECRETS
+
+    KYC --> K8S_DNS
+    KYC --> CONFIG
+    KYC --> RDS
+    KYC --> KAFKA
+    KYC --> USER
+    KYC --> AUTH
+    KYC --> S3
+    KYC --> SECRETS
+
+    ACC --> K8S_DNS
+    ACC --> CONFIG
+    ACC --> RDS
+    ACC --> KAFKA
+    ACC --> REDIS
+    ACC --> USER
+    ACC --> KYC
+    ACC --> SECRETS
+
+    TXN --> K8S_DNS
+    TXN --> CONFIG
+    TXN --> RDS
+    TXN --> KAFKA
+    TXN --> ACC
+    TXN --> SECRETS
+
+    NOTIF --> K8S_DNS
+    NOTIF --> CONFIG
+    NOTIF --> KAFKA
+    NOTIF --> SECRETS
+
+    LEDGER --> K8S_DNS
+    LEDGER --> CONFIG
+    LEDGER --> RDS
+    LEDGER --> KAFKA
+    LEDGER --> ACC
+    LEDGER --> TXN
+    LEDGER --> SECRETS
+
+    COMPLIANCE --> K8S_DNS
+    COMPLIANCE --> CONFIG
+    COMPLIANCE --> RDS
+    COMPLIANCE --> KAFKA
+    COMPLIANCE --> KYC
+    COMPLIANCE --> USER
+    COMPLIANCE --> SECRETS
+
+    EUREKA -.->|Local Dev Only| AUTH
+    EUREKA -.->|Local Dev Only| USER
+    EUREKA -.->|Local Dev Only| KYC
+    EUREKA -.->|Local Dev Only| ACC
+    EUREKA -.->|Local Dev Only| TXN
+    EUREKA -.->|Local Dev Only| NOTIF
+```

@@ -1,0 +1,69 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+stateDiagram-v2
+    [*] --> DRAFT : Customer starts KYC
+
+    DRAFT --> SUBMITTED : Customer submits\nPOST /users/kyc/submit\n[CUSTOMER: owner]
+
+    SUBMITTED --> PENDING_REVIEW : Auto-assign or Manager assigns\n[SYSTEM / KYC_MANAGER]
+
+    PENDING_REVIEW --> UNDER_REVIEW : Officer starts review\n[KYC_OFFICER: assigned]
+
+    UNDER_REVIEW --> MORE_INFO_REQUIRED : Officer requests info\n[KYC_OFFICER: assigned]\nSpecific docs identified
+
+    MORE_INFO_REQUIRED --> RESUBMITTED : Customer provides info\n[CUSTOMER: owner]\nAll requested items provided
+
+    RESUBMITTED --> UNDER_REVIEW : Auto-transition\n[SYSTEM]
+
+    UNDER_REVIEW --> RECOMMENDED_APPROVAL : Officer recommends approve\n[KYC_OFFICER: assigned]\nAll checks passed, findings recorded
+
+    UNDER_REVIEW --> RECOMMENDED_REJECTION : Officer recommends reject\n[KYC_OFFICER: assigned]\nDeficiency found, findings recorded
+
+    RECOMMENDED_APPROVAL --> PENDING_MANAGER_APPROVAL : Auto-forward\n[SYSTEM]
+
+    RECOMMENDED_REJECTION --> PENDING_MANAGER_APPROVAL : Auto-forward\n[SYSTEM]
+
+    PENDING_MANAGER_APPROVAL --> APPROVED : Manager approves\n[KYC_MANAGER: authorized, ≠ reviewer]\nRecords approval reason
+
+    PENDING_MANAGER_APPROVAL --> REJECTED : Manager rejects\n[KYC_MANAGER: authorized, ≠ reviewer]\nRecords rejection reason
+
+    PENDING_MANAGER_APPROVAL --> UNDER_REVIEW : Manager returns\n[KYC_MANAGER: authorized]\nIncomplete, needs more work
+
+    PENDING_MANAGER_APPROVAL --> ESCALATED : Manager escalates\n[KYC_MANAGER: authorized]\nExceptional case
+
+    ESCALATED --> UNDER_REVIEW : Compliance resolves\n[COMPLIANCE_OFFICER]\nEscalation resolved
+
+    APPROVED --> [*] : KYC Complete\nPublish KYC_APPROVED\nEnable account creation
+
+    REJECTED --> [*] : KYC Complete\nPublish KYC_REJECTED\nCustomer can reapply
+
+    note right of DRAFT
+        Customer fills application
+        Uploads documents
+        Can save as draft
+    end note
+
+    note right of UNDER_REVIEW
+        Officer performs:
+        - Document authenticity
+        - OCR data extraction
+        - Face match (selfie)
+        - Sanctions/PEP screen
+        Records findings per doc
+    end note
+
+    note right of PENDING_MANAGER_APPROVAL
+        Manager reviews:
+        - Officer findings
+        - Recommendation
+        - Risk indicators
+        SoD enforced: manager ≠ officer
+    end note
+
+    note right of APPROVED
+        Triggers:
+        - Customer notification
+        - Account Service enablement
+        - Compliance audit log
+    end note
+```

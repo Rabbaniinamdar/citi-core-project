@@ -1,0 +1,44 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+stateDiagram-v2
+    [*] --> INITIATED: Client POST /transfer
+    INITIATED --> DEBIT_REQUESTED: Save Transaction + Outbox
+    DEBIT_REQUESTED --> DEBIT_PROCESSING: Transaction Service orchestrates debit
+    DEBIT_PROCESSING --> DEBIT_SUCCESS: Account Service debits sender
+    DEBIT_PROCESSING --> DEBIT_FAILED: Insufficient balance / Account invalid
+
+    DEBIT_SUCCESS --> CREDIT_REQUESTED: Transaction Service orchestrates credit
+    CREDIT_REQUESTED --> CREDIT_PROCESSING: Account Service credits receiver
+    CREDIT_PROCESSING --> CREDIT_SUCCESS: Credit completed
+    CREDIT_PROCESSING --> CREDIT_FAILED: Receiver account invalid / Closed
+
+    CREDIT_SUCCESS --> COMPLETED: Mark CREDIT_SUCCESS, Notify
+    COMPLETED --> [*]: Saga Complete
+
+    CREDIT_FAILED --> REVERSAL_TRIGGERED: Transaction Service initiates reversal
+    REVERSAL_TRIGGERED --> REVERSAL_PROCESSING: Account Service credits sender
+    REVERSAL_PROCESSING --> REVERSAL_SUCCESS: Reversal completed
+    REVERSAL_SUCCESS --> REVERSED: Mark REVERSED, Notify
+    REVERSED --> [*]: Saga Complete (Compensated)
+
+    DEBIT_FAILED --> FAILED: Mark FAILED, Notify
+    FAILED --> [*]: Saga Complete (Failed)
+
+    note right of INITIATED
+        Transaction Service = Orchestrator
+        State persisted in citicore_transactiondb
+    end note
+
+    note right of CREDIT_FAILED
+        Explicit compensation via reversal-topic
+        Idempotent reversal processing
+    end note
+```
+
+### Hybrid Saga Pattern Summary
+
+| Domain | Pattern | Owner | Rationale |
+|--------|---------|-------|-----------|
+| **Fund Transfers** | **Orchestration** | Transaction Service | Financial consistency; centralized state; explicit compensation |
+| **Notifications** | **Choreography** | Notification Service | Independent; fire-and-forget; no compensation |
+| **Audit Events** | **Async Consumption** | Compliance Service | Independent; idempotent; no saga participation |

@@ -1,0 +1,36 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+graph TB
+    subgraph ROLE_HIERARCHY ["Role Hierarchy (Permission Inheritance)"]
+        ADMIN[ROLE_ADMIN<br/>Super Role<br/>All 28 Permissions]
+
+        COMPLIANCE[ROLE_COMPLIANCE_OFFICER<br/>12 Permissions]
+        KYC_MGR[ROLE_KYC_MANAGER<br/>11 Permissions]
+        OPERATIONS[ROLE_OPERATIONS_OFFICER<br/>10 Permissions]
+        SUPPORT[ROLE_SUPPORT_AGENT<br/>6 Permissions]
+        AUDITOR[ROLE_AUDITOR<br/>5 Permissions]
+
+        KYC_OFF[ROLE_KYC_OFFICER<br/>8 Permissions]
+
+        CUSTOMER[ROLE_CUSTOMER<br/>13 Permissions<br/><i>Independent</i>]
+        SERVICE[ROLE_SERVICE<br/>1 Permission<br/><i>Independent</i>]
+    end
+
+    ADMIN --> COMPLIANCE
+    ADMIN --> KYC_MGR
+    ADMIN --> OPERATIONS
+    ADMIN --> SUPPORT
+    ADMIN --> AUDITOR
+
+    KYC_MGR --> KYC_OFF
+
+    style ADMIN fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style KYC_MGR fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style KYC_OFF fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style COMPLIANCE fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style OPERATIONS fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style SUPPORT fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style AUDITOR fill:#eceff1,stroke:#455a64,stroke-width:2px
+    style CUSTOMER fill:#e0f2f1,stroke:#00695c,stroke-width:2px
+    style SERVICE fill:#f5f5f5,stroke:#757575,stroke-width:2px
+```

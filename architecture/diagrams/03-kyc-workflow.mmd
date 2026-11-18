@@ -1,0 +1,94 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+flowchart TD
+    subgraph CUSTOMER_JOURNEY ["Customer Journey"]
+        C1[Register & Verify Email]
+        C2[Complete Profile]
+        C3[Upload KYC Documents\nPAN, Aadhaar, Address, Selfie]
+        C4[Submit KYC Application]
+        C5[View Status: SUBMITTED]
+        C6{Info Requested?}
+        C7[Provide Additional Info]
+        C8[View Final Decision\nAPPROVED / REJECTED]
+        C9[If APPROVED: Open Account]
+    end
+
+    subgraph KYC_WORKFLOW ["KYC Workflow Service"]
+        W1[Create KycCase\nStatus: SUBMITTED]
+        W2[Auto-Assign to Officer\nStatus: PENDING_REVIEW]
+        W3[Officer Claims Case\nStatus: UNDER_REVIEW]
+        W4[Officer Reviews Documents\nPerforms Checks]
+        W5[Officer Records Findings]
+        W6{All Checks Pass?}
+        W7[Request More Info\nStatus: MORE_INFO_REQUIRED]
+        W8[Recommend Approval\nStatus: RECOMMENDED_APPROVAL]
+        W9[Recommend Rejection\nStatus: RECOMMENDED_REJECTION]
+        W10[Auto-Forward to Manager\nStatus: PENDING_MANAGER_APPROVAL]
+        W11{Manager Action}
+        W12[Approve\nStatus: APPROVED]
+        W13[Reject\nStatus: REJECTED]
+        W14[Return for Review\nStatus: UNDER_REVIEW]
+        W15[Escalate\nStatus: ESCALATED]
+        W16[Publish KYC_APPROVED Event]
+    end
+
+    subgraph OFFICER_ACTIONS ["KYC Officer (Maker)"]
+        O1[Login & View Assigned Cases]
+        O2[Select Case]
+        O3[Review Profile & Documents]
+        O4[Perform Verification:\n- Document Authenticity\n- OCR Data Match\n- Face Match\n- Sanctions Screen]
+        O5[Record Findings per Document]
+        O6[Decide: Request Info / Recommend]
+    end
+
+    subgraph MANAGER_ACTIONS ["KYC Manager (Checker)"]
+        M1[Login & View Pending Approval]
+        M2[Select Case]
+        M3[Review Officer Findings]
+        M4{SoD Check:\nManager != Officer?}
+        M5[BLOCK: Self-Approval Prohibited]
+        M6[Decide: Approve/Reject/Return/Escalate]
+        M7[Record Decision Reason]
+    end
+
+    subgraph INTEGRATIONS ["Downstream Integrations"]
+        I1[Notification Service\nEmails to Customer/Officer/Manager]
+        I2[Account Service\nEnable Account Creation]
+        I3[Compliance Service\nAudit Trail + Escalations]
+        I4[Event Bus\nKafka Topics]
+    end
+
+    C1 --> C2 --> C3 --> C4 --> C5
+    C4 --> W1
+    W1 --> W2
+    W2 --> W3
+    W3 --> O1
+    O1 --> O2 --> O3 --> O4 --> O5 --> O6
+    O6 -->|Request Info| W7
+    W7 --> C6
+    C6 -->|Yes| C7
+    C7 --> W3
+    O6 -->|Recommend Approve| W8
+    O6 -->|Recommend Reject| W9
+    W8 --> W10
+    W9 --> W10
+    W10 --> M1
+    M1 --> M2 --> M3 --> M4
+    M4 -->|Yes| M5
+    M4 -->|No| M6
+    M6 -->|Approve| W12
+    M6 -->|Reject| W13
+    M6 -->|Return| W14
+    M6 -->|Escalate| W15
+    W14 --> W3
+    W15 --> Compliance[Compliance Resolves] --> W3
+    W12 --> W16
+    W16 --> I1
+    W16 --> I2
+    W16 --> I3
+    W13 --> I1
+    W13 --> I3
+    I2 --> C9
+    C5 --> C8
+    W13 --> C8
+```

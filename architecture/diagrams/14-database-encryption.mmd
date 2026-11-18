@@ -1,0 +1,50 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+graph TB
+    subgraph RDS ["AWS RDS MySQL 8.0"]
+        STORAGE[Storage Layer<br/>Tables, Indexes, Logs, Backups]
+
+        subgraph SCHEMAS ["Service Schemas"]
+            AUTH_SCHEMA[citicore_authdb]
+            KYC_SCHEMA[citicore_kycdb]
+            ACC_SCHEMA[citicore_account]
+            TXN_SCHEMA[citicore_transactiondb]
+            USER_SCHEMA[citicore_userdb]
+        end
+    end
+
+    subgraph LAYER1 ["Layer 1: Transparent Storage Encryption"]
+        KMS1[AWS KMS<br/>Customer-Managed Key<br/>citicore-rds-encryption-key]
+        RDS_ENC[RDS Storage Encryption<br/>AES-256<br/>Covers: Data, Backups, Snapshots,<br/>Read Replicas, Redo Logs]
+    end
+
+    subgraph LAYER2 ["Layer 2: Application-Level Envelope Encryption"]
+        KMS2[AWS KMS<br/>Field Encryption Key<br/>citicore-field-encryption-key]
+        APP_ENC[FieldEncryptionService<br/>AES-256-GCM<br/>Envelope Encryption]
+
+        subgraph ENCRYPTED_FIELDS ["Selective Field Encryption"]
+            PAN[pan_number<br/>AES-256-GCM]
+            AADHAAR[aadhaar_number<br/>AES-256-GCM]
+            PASSPORT[passport_number<br/>AES-256-GCM]
+            ACCOUNT[account_number<br/>AES-256-GCM]
+            NOMINEE[nominee_name<br/>AES-256-GCM]
+        end
+    end
+
+    subgraph SEARCH ["Search Support"]
+        HASH[SHA-256 Hash Columns<br/>pan_hash, aadhaar_hash<br/>For Exact-Match Lookups]
+    end
+
+    KMS1 -.->|Encrypt/Decrypt| RDS_ENC
+    RDS_ENC -.->|Transparent| STORAGE
+    RDS_ENC -.->|Transparent| SCHEMAS
+
+    KMS2 -.->|GenerateDataKey/Decrypt| APP_ENC
+    APP_ENC -.->|Encrypt/Decrypt| ENCRYPTED_FIELDS
+    APP_ENC -.->|Hash for Index| HASH
+
+    style KMS1 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style KMS2 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style RDS_ENC fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style APP_ENC fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+```

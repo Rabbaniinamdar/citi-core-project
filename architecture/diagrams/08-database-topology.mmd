@@ -1,0 +1,49 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+graph TB
+    subgraph RDS_MYSQL ["AWS RDS for MySQL 8.0 (Single Deployment, KMS Encrypted)"]
+        subgraph SCHEMAS ["Service Schemas (Separate Credentials)"]
+            AUTH_SCHEMA[(citicore_authdb<br/>users, roles, user_roles, refresh_tokens, login_attempts)]
+            KYC_SCHEMA[(citicore_kycdb<br/>kyc_cases, kyc_case_assignments,<br/>kyc_case_history, kyc_review_findings,<br/>kyc_document_refs)]
+            ACC_SCHEMA[(citicore_account<br/>accounts, account_statements,<br/>account_outbox, account_sequences,<br/>account_holds)]
+            TXN_SCHEMA[(citicore_transactiondb<br/>transactions, outbox_events,<br/>idempotency_keys, daily_limits)]
+            USER_SCHEMA[(citicore_userdb<br/>user_profiles, kyc_documents)]
+            LEDGER_SCHEMA[(citicore_ledgerdb<br/>ledger_accounts, journal_entries,<br/>journal_lines, ledger_balances<br/><i>Planned</i>)]
+            COMPLIANCE_SCHEMA[(citicore_compliancedb<br/>sanctions, pep, monitoring,<br/>sar, reports<br/><i>Planned</i>)]
+        end
+
+        subgraph ENCRYPTION ["Encryption Layer"]
+            KMS_RDS[AWS KMS<br/>Customer-Managed Key<br/>RDS Storage Encryption]
+            KMS_FIELD[AWS KMS<br/>Field Encryption Key<br/>Envelope Encryption]
+        end
+    end
+
+    subgraph REDIS_CLUSTER ["Redis Cluster (ElastiCache)"]
+        CACHE[(Cache: Balance, Session, Rate Limit,<br/>Case Assignments, User Permissions)]
+    end
+
+    subgraph KAFKA_CLUSTER ["Kafka Cluster (MSK)"]
+        TOPICS[Topics: 3 partitions, RF=3<br/>transfer-requested, debit-success,<br/>credit-success, reversal, kyc, kyc-case,<br/>kyc-notification, otp, account-events, DLQs]
+    end
+
+    subgraph S3_STORAGE ["AWS S3 (SSE-KMS Encrypted)"]
+        KYC_DOCS_QUARANTINE[(Quarantine Bucket<br/>Unscanned Uploads)]
+        KYC_DOCS_CLEAN[(Clean Bucket<br/>Scanned Documents)]
+    end
+
+    AUTH_SVC[Auth Service] --> AUTH_SCHEMA
+    USER_SVC[User Service] --> USER_SCHEMA
+    KYC_SVC[KYC Workflow Service] --> KYC_SCHEMA
+    KYC_SVC --> CACHE
+    ACC_SVC[Account Service] --> ACC_SCHEMA
+    ACC_SVC --> CACHE
+    TXN_SVC[Transaction Service] --> TXN_SCHEMA
+    LEDGER_SVC[Ledger Service] --> LEDGER_SCHEMA
+    COMPLIANCE_SVC[Compliance Service] --> COMPLIANCE_SCHEMA
+    ALL_SVC[All Services] --> KAFKA_CLUSTER
+    USER_SVC --> KYC_DOCS_QUARANTINE
+    KYC_SVC --> KYC_DOCS_CLEAN
+
+    KMS_RDS -.->|Transparent| RDS_MYSQL
+    KMS_FIELD -.->|Envelope| SCHEMAS
+```

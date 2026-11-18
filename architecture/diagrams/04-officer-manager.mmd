@@ -1,0 +1,67 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+sequenceDiagram
+    participant Officer as KYC Officer
+    participant GW as API Gateway
+    participant KYC as KYC Workflow Service
+    participant USER as User Service
+    participant KAFKA as Kafka
+    participant NOTIF as Notification Service
+    participant Manager as KYC Manager
+    participant ACC as Account Service
+
+    Note over Officer,ACC: Phase 1: Case Assignment
+    KYC->>KYC: Auto-assign case KYC-20261118-001 to Officer
+    KYC->>KAFKA: Publish KYC_CASE_ASSIGNED
+    KAFKA->>NOTIF: Notify Officer
+
+    Note over Officer,ACC: Phase 2: Officer Review
+    Officer->>GW: GET /kyc/cases/assigned
+    GW->>KYC: Forward (RBAC: KYC_OFFICER + assigned)
+    KYC->>USER: Feign: Get customer profile + documents
+    USER-->>KYC: Profile + S3 Document URLs
+    KYC-->>GW: Case list
+    GW-->>Officer: Assigned cases
+
+    Officer->>GW: GET /kyc/cases/KYC-001
+    GW->>KYC: Forward (RBAC: assigned + UNDER_REVIEW)
+    KYC-->>GW: Case details + documents
+    GW-->>Officer: Full case view
+
+    Officer->>GW: POST /kyc/cases/KYC-001/findings\n{findings: [{doc: PAN, status: VERIFIED}, ...]}
+    GW->>KYC: Forward (RBAC: assigned)
+    KYC->>KYC: Validate & save findings
+    KYC->>KAFKA: Publish KYC_CASE_REVIEWED
+    KAFKA->>NOTIF: Log review completion
+
+    Officer->>GW: POST /kyc/cases/KYC-001/recommend\n{recommendation: APPROVE, remarks: "All clear"}
+    GW->>KYC: Forward (RBAC: assigned)
+    KYC->>KYC: Validate complete findings
+    KYC->>KYC: Set status=RECOMMENDED_APPROVAL
+    KYC->>KYC: Set reviewingOfficerId=Officer
+    KYC->>KAFKA: Publish KYC_CASE_RECOMMENDED
+    KAFKA->>NOTIF: Notify Manager(s)
+
+    Note over Officer,ACC: Phase 3: Manager Decision
+    Manager->>GW: GET /kyc/cases/pending-approval
+    GW->>KYC: Forward (RBAC: KYC_MANAGER + authorized)
+    KYC->>KYC: Filter: authorizedManagerId=Manager AND reviewingOfficerId!=Manager
+    KYC-->>GW: Authorized cases only
+    GW-->>Manager: Pending approval cases
+
+    Manager->>GW: GET /kyc/cases/KYC-001/review
+    GW->>KYC: Forward (RBAC: authorized)
+    KYC->>KYC: Fetch case + all findings + recommendation
+    KYC-->>GW: Complete review package
+    GW-->>Manager: Officer findings + recommendation
+
+    Manager->>GW: POST /kyc/cases/KYC-001/approve\n{approvalReason: "Verified all docs"}
+    GW->>KYC: Forward (RBAC: KYC_MANAGER + authorized)
+    KYC->>KYC: **SoD CHECK: Manager != reviewingOfficerId** ✅
+    KYC->>KYC: Set status=APPROVED, decidingManagerId=Manager
+    KYC->>KAFKA: Publish KYC_CASE_APPROVED
+    KAFKA->>NOTIF: Notify Customer (approved)
+    KAFKA->>ACC: KYC_APPROVED event
+    ACC->>ACC: Allow account creation for customer
+    KAFKA->>Compliance: Audit trail
+```

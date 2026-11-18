@@ -5,12 +5,12 @@
 | Field | Value |
 |-------|-------|
 | **Document Title** | CitiCore Banking Platform - Target State Architecture |
-| **Version** | 1.0 |
-| **Status** | Draft for Review |
+| **Version** | 3.0 |
+| **Status** | Approved |
 | **Classification** | Internal - Confidential |
 | **Author** | Architecture Team |
-| **Reviewers** | Engineering Lead, Security Lead, Platform Team |
-| **Last Updated** | 2026-11-17 |
+| **Reviewers** | Engineering Lead, Security Lead, Platform Team, Compliance Officer |
+| **Last Updated** | 2026-11-18 |
 
 ---
 
@@ -18,38 +18,43 @@
 
 1. [Product Overview](#1-product-overview)
 2. [Functional Modules](#2-functional-modules)
-3. [User Roles & Access Matrix](#3-user-roles--access-matrix)
+3. [User Roles & Access Matrix (Updated - RBAC)](#3-user-roles--access-matrix)
 4. [Microservices Architecture](#4-microservices-architecture)
 5. [Database Architecture](#5-database-architecture)
 6. [Service Communication Patterns](#6-service-communication-patterns)
 7. [Event-Driven Architecture](#7-event-driven-architecture)
 8. [Financial Transaction Processing](#8-financial-transaction-processing)
 9. [Double-Entry Ledger Architecture](#9-double-entry-ledger-architecture)
-10. [Security Architecture](#10-security-architecture)
-11. [Infrastructure & Deployment](#11-infrastructure--deployment)
-12. [Monitoring & Observability](#12-monitoring--observability)
-13. [End-to-End Workflows](#13-end-to-end-workflows)
-14. [Architecture Review Observations](#14-architecture-review-observations)
+10. [Security Architecture (Updated - RBAC)](#10-security-architecture)
+11. [KYC Architecture (Updated - Maker-Checker Workflow)](#11-kyc-architecture)
+12. [Infrastructure & Deployment](#12-infrastructure--deployment)
+13. [Monitoring & Observability](#13-monitoring--observability)
+14. [End-to-End Workflows](#14-end-to-end-workflows)
+15. [Architecture Review Observations](#15-architecture-review-observations)
 
 ---
 
 ## 1. Product Overview
 
 ### 1.1 Purpose
-CitiCore is a **microservices-based digital banking platform** designed to deliver core banking functionality including customer onboarding, account management, fund transfers, and financial ledger operations. The platform follows a cloud-native architecture built on Spring Boot 3.2.4, Java 17, and Spring Cloud 2023.0.3.
+CitiCore is a **microservices-based digital banking platform** designed to deliver core banking functionality including customer onboarding, account management, fund transfers, KYC maker-checker workflow, and financial ledger operations. The platform follows a cloud-native architecture built on Spring Boot 3.2.4, Java 17, and Spring Cloud 2023.0.3.
 
 ### 1.2 Scope
-- **In Scope**: Customer registration & KYC, Account lifecycle (Savings/Current), Internal fund transfers, Double-entry general ledger, Notification services, API Gateway with resilience patterns
+- **In Scope**: Customer registration & KYC with maker-checker workflow, Account lifecycle (Savings/Current), Internal fund transfers, Double-entry general ledger, Notification services, API Gateway with resilience patterns, Comprehensive RBAC
 - **Out of Scope**: External payment rail integrations (NEFT/RTGS/IMPS/UPI), Card management, Loan origination, Wealth management, International banking
 
 ### 1.3 Key Architectural Principles
+
 | Principle | Description |
 |-----------|-------------|
-| **Domain-Driven Design** | Services aligned to business capabilities (Auth, User, Account, Transaction, Notification) |
-| **Database per Service** | Each microservice owns its data; no shared databases |
+| **Domain-Driven Design** | Services aligned to business capabilities (Auth, User, Account, Transaction, Notification, KYC) |
+| **Schema per Service** | Each microservice owns its schema within a single RDS MySQL deployment; no shared schemas; separate credentials per service |
 | **Event-Driven** | Kafka for async communication; transactional outbox for reliability |
-| **Saga Pattern** | Choreography-based distributed transactions for fund transfers |
-| **Security First** | Zero-trust, JWT-based authentication, RBAC, rate limiting |
+| **Saga Pattern** | Hybrid: Orchestration for fund transfers; Choreography for notifications; Async event consumption for audit |
+| **Security First** | Zero-trust, JWT-based authentication, Comprehensive RBAC, rate limiting |
+| **Separation of Duties** | Maker-Checker enforced for KYC approvals; Officer cannot approve own case |
+| **Encryption by Default** | AWS RDS KMS encryption at rest; TLS 1.2+ in transit; Selective application-level envelope encryption for sensitive PII |
+| **Secrets Management** | AWS Secrets Manager for all credentials; IAM workload identity for EKS |
 | **Observability** | Structured logging, metrics, distributed tracing, health checks |
 | **Infrastructure as Code** | Docker, Kubernetes, Helm, GitOps |
 
@@ -62,10 +67,10 @@ CitiCore is a **microservices-based digital banking platform** designed to deliv
 | **Cloud** | Spring Cloud | 2023.0.3 |
 | **Security** | Spring Security, JWT (jjwt) | 0.12.5 |
 | **Data** | Spring Data JPA, Hibernate | 6.4.5 |
-| **Database** | MySQL | 8.0 |
+| **Database** | AWS RDS for MySQL | 8.0 |
 | **Cache** | Redis | 7 |
 | **Messaging** | Apache Kafka | 3.8 |
-| **Service Discovery** | Netflix Eureka | - |
+| **Service Discovery** | Kubernetes DNS (Production) / Netflix Eureka (Local) | - |
 | **Config** | Spring Cloud Config | - |
 | **Gateway** | Spring Cloud Gateway (WebFlux) | - |
 | **Resilience** | Resilience4j | - |
@@ -76,6 +81,9 @@ CitiCore is a **microservices-based digital banking platform** designed to deliv
 | **Email** | Spring Mail, SendGrid | - |
 | **Cloud Storage** | AWS S3 SDK v2 | - |
 | **OCR** | Google Cloud Vision | - |
+| **Secrets Management** | AWS Secrets Manager | - |
+| **Encryption** | AWS KMS (RDS storage encryption + application-level envelope encryption) | - |
+| **Malware Scanning** | ClamAV (via S3 Object Lambda) | - |
 
 ---
 
@@ -110,10 +118,21 @@ CitiCore is a **microservices-based digital banking platform** designed to deliv
 │  │ • OCR         │  │  │ • GL Accounts │  │  └─────────────────────────┘   │
 │  └───────────────┘  │  │ • Journal Ent │  │                                 │
 │                     │  │ • Trial Bal   │  │  ┌─────────────────────────┐   │
-│                     │  │ • Reconcile   │  │  │   Platform Services     │   │
-│                     │  │ • Audit Trail │  │  │                         │   │
-│                     │  └───────────────┘  │  │ • API Gateway           │   │
-└─────────────────────┴─────────────────────┴──│ • Config Server         │───┘
+│  ┌───────────────┐  │  │ • Reconcile   │  │  │   KYC Workflow Svc      │   │
+│  │ KYC Workflow  │  │  │ • Audit Trail │  │  │   (Maker-Checker)       │   │
+│  │ Service       │  │  └───────────────┘  │  │                         │   │
+│  │               │  │                     │  │ • Case Assignment       │   │
+│  │ • Case Mgmt   │  │  ┌───────────────┐  │  │ • State Machine         │   │
+│  │ • Review Flow │  │  │ Compliance    │  │  │ • Audit Trail           │   │
+│  │ • Approval    │  │  │ Service       │  │  │ • Escalation            │   │
+│  │ • Separation  │  │  │ (Planned)     │  │  └─────────────────────────┘   │
+│  └───────────────┘  │  └───────────────┘  │                                 │
+└─────────────────────┴─────────────────────┴─────────────────────────────────┘
+                                               ┌─────────────────────────┐
+                                               │   Platform Services     │
+                                               │                         │
+                                               │ • API Gateway           │
+                                               │ • Config Server         │
                                                │ • Eureka Discovery      │
                                                │ • Kafka Event Bus       │
                                                └─────────────────────────┘
@@ -124,56 +143,180 @@ CitiCore is a **microservices-based digital banking platform** designed to deliv
 | Module | Service | Core Responsibility | Key APIs |
 |--------|---------|---------------------|----------|
 | **Customer** | Auth Service | Identity & access management | `/api/v1/auth/*` |
-| **Customer** | User Service | Profile, KYC, documents | `/api/v1/users/*` |
+| **Customer** | User Service | Profile, KYC documents | `/api/v1/users/*` |
+| **KYC** | KYC Workflow Service | Maker-checker KYC workflow, case management, state transitions | `/api/v1/kyc/*` |
 | **Account** | Account Service | Account lifecycle, balances, ledger posting | `/api/v1/accounts/*` |
 | **Transaction** | Transaction Service | Fund transfers, saga orchestration | `/api/v1/transactions/*` |
 | **Notification** | Notification Service | Multi-channel notifications | Internal (Kafka) |
 | **Ledger** | Ledger Service (Planned) | Double-entry GL, compliance | `/api/v1/ledger/*` |
+| **Compliance** | Compliance Service (Planned) | AML, sanctions, regulatory reporting | `/api/v1/compliance/*` |
 | **Platform** | API Gateway | Routing, auth, rate limiting, resilience | `/` (all traffic) |
 | **Platform** | Config Server | Centralized configuration | `/config/*` |
-| **Platform** | Eureka Server | Service discovery | `/eureka/*` |
+| **Platform** | Eureka Server | Service registry & discovery | `/eureka/*` |
 
 ---
 
 ## 3. User Roles & Access Matrix
 
-### 3.1 Role Definitions
+### 3.1 Role Definitions (Updated - Comprehensive RBAC)
 
-| Role | Description | Default Assignment |
-|------|-------------|-------------------|
-| **ROLE_CUSTOMER** | Retail banking customer | Assigned on registration |
-| **ROLE_ADMIN** | Platform administrator | Assigned by super-admin |
-| **ROLE_SUPPORT** | Customer support agent | Assigned by admin |
-| **ROLE_AUDITOR** | Read-only audit access | Assigned by admin |
-| **ROLE_SERVICE** | Service-to-service communication | Internal (Feign clients) |
+| Role | Description | Default Assignment | Business Context |
+|------|-------------|-------------------|------------------|
+| **ROLE_CUSTOMER** | Retail banking customer | Assigned on registration | Can access only own data |
+| **ROLE_KYC_OFFICER** | KYC case reviewer (Maker) | Assigned by KYC_MANAGER or ADMIN | Reviews assigned KYC cases, recommends approval/rejection |
+| **ROLE_KYC_MANAGER** | KYC case approver (Checker) | Assigned by ADMIN | Approves/rejects KYC cases reviewed by Officers |
+| **ROLE_SUPPORT_AGENT** | Customer support agent | Assigned by ADMIN | Views customer profiles, accounts; limited KYC visibility |
+| **ROLE_OPERATIONS_OFFICER** | Banking operations staff | Assigned by ADMIN | Account operations, transaction monitoring |
+| **ROLE_COMPLIANCE_OFFICER** | Compliance & AML officer | Assigned by ADMIN | Full KYC audit access, regulatory reporting |
+| **ROLE_ADMIN** | Platform administrator | Assigned by super-admin | Full platform access, user/role management |
+| **ROLE_AUDITOR** | Read-only audit access | Assigned by ADMIN | Read-only access to all audit trails |
+| **ROLE_SERVICE** | Service-to-service communication | Internal (Feign clients) | Internal API access only |
 
-### 3.2 Access Control Matrix
+### 3.2 Role Hierarchy
 
-| Endpoint Pattern | CUSTOMER | ADMIN | SUPPORT | AUDITOR | SERVICE |
-|------------------|----------|-------|---------|---------|---------|
-| `POST /auth/register` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `POST /auth/login` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `POST /auth/refresh` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `GET /users/profile` | Own | All | All | All | ❌ |
-| `PUT /users/profile` | Own | All | ❌ | ❌ | ❌ |
-| `POST /users/kyc/*` | Own | All | ❌ | ❌ | ❌ |
-| `GET /users/admin/*` | ❌ | ✅ | ❌ | ✅ | ❌ |
-| `POST /accounts/create` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `GET /accounts/balance/*` | Own | All | Own | All | ❌ |
-| `POST /accounts/deposit` | Own | ✅ | ❌ | ❌ | ✅ |
-| `POST /accounts/withdraw` | Own | ✅ | ❌ | ❌ | ❌ |
-| `POST /accounts/transfer` | Own | ✅ | ❌ | ❌ | ❌ |
-| `GET /accounts/statement/*` | Own | All | Own | All | ❌ |
-| `POST /transactions/transfer` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `GET /transactions/*` | Own | All | Own | All | ❌ |
-| `GET /actuator/health` | ❌ | ✅ | ✅ | ✅ | ✅ |
-| `GET /actuator/*` | ❌ | ✅ | ❌ | ✅ | ❌ |
+```
+ROLE_ADMIN
+    ├── ROLE_COMPLIANCE_OFFICER
+    ├── ROLE_KYC_MANAGER
+    │       └── ROLE_KYC_OFFICER
+    ├── ROLE_OPERATIONS_OFFICER
+    ├── ROLE_SUPPORT_AGENT
+    └── ROLE_AUDITOR
+
+ROLE_CUSTOMER (no inheritance)
+```
+
+### 3.3 Permission Definitions (Granular Permissions)
+
+| Permission | Description | Resource Scope |
+|------------|-------------|----------------|
+| `CUSTOMER_PROFILE_READ` | Read own profile | Own |
+| `CUSTOMER_PROFILE_WRITE` | Update own profile | Own |
+| `CUSTOMER_PROFILE_READ_ALL` | Read any customer profile | All (staff) |
+| `KYC_DOCUMENT_UPLOAD` | Upload KYC documents | Own |
+| `KYC_DOCUMENT_READ` | Read KYC documents | Own / Assigned cases (Officer/Manager) |
+| `KYC_CASE_ASSIGN` | Assign KYC case to officer | Manager/Admin |
+| `KYC_CASE_REVIEW` | Review KYC case (Maker) | Assigned cases (Officer) |
+| `KYC_CASE_RECOMMEND` | Recommend approval/rejection | Assigned cases (Officer) |
+| `KYC_CASE_REQUEST_INFO` | Request additional info | Assigned cases (Officer) |
+| `KYC_CASE_APPROVE` | Approve KYC case (Checker) | Authorized cases (Manager) |
+| `KYC_CASE_REJECT` | Reject KYC case (Checker) | Authorized cases (Manager) |
+| `KYC_CASE_RETURN` | Return case for further review | Authorized cases (Manager) |
+| `KYC_CASE_ESCALATE` | Escalate exceptional cases | Manager/Compliance |
+| `KYC_AUDIT_READ` | Read KYC audit trail | All (Compliance/Auditor/Admin) |
+| `ACCOUNT_CREATE` | Create new account | Own (Customer) / All (Operations) |
+| `ACCOUNT_READ` | Read account details | Own / All (Staff) |
+| `ACCOUNT_DEPOSIT` | Deposit funds | Own / All (Operations) |
+| `ACCOUNT_WITHDRAW` | Withdraw funds | Own |
+| `ACCOUNT_TRANSFER` | Transfer funds | Own |
+| `ACCOUNT_STATEMENT` | View account statements | Own / All (Staff) |
+| `ACCOUNT_CLOSE` | Close account | Own / Admin |
+| `TRANSFER_INITIATE` | Initiate fund transfer | Own |
+| `TRANSFER_HISTORY` | View transfer history | Own / All (Staff) |
+| `TRANSFER_MONITOR` | Monitor all transfers | Operations/Compliance |
+| `ADMIN_USER_MANAGE` | Manage users and roles | Admin |
+| `ADMIN_ROLE_ASSIGN` | Assign/revoke roles | Admin |
+| `ADMIN_CONFIG_MANAGE` | Manage platform configuration | Admin |
+| `AUDIT_TRAIL_READ` | Read audit logs | Auditor/Admin/Compliance |
+| `SERVICE_INTERNAL` | Internal service calls | Service-to-service |
+
+### 3.4 Role-to-Permission Mapping Matrix
+
+| Permission | CUSTOMER | KYC_OFFICER | KYC_MANAGER | SUPPORT_AGENT | OPERATIONS_OFFICER | COMPLIANCE_OFFICER | ADMIN | AUDITOR | SERVICE |
+|------------|:--------:|:-----------:|:-----------:|:-------------:|:------------------:|:------------------:|:-----:|:-------:|:-------:|
+| `CUSTOMER_PROFILE_READ` | ✅ Own | ✅ Assigned | ✅ All | ✅ All | ✅ All | ✅ All | ✅ All | ✅ All | ❌ |
+| `CUSTOMER_PROFILE_WRITE` | ✅ Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ All | ❌ | ❌ |
+| `CUSTOMER_PROFILE_READ_ALL` | ❌ | ✅ Assigned | ✅ All | ✅ All | ✅ All | ✅ All | ✅ All | ✅ All | ❌ |
+| `KYC_DOCUMENT_UPLOAD` | ✅ Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ All | ❌ | ❌ |
+| `KYC_DOCUMENT_READ` | ✅ Own | ✅ Assigned | ✅ Authorized | ✅ Limited | ✅ All | ✅ All | ✅ All | ✅ All | ❌ |
+| `KYC_CASE_ASSIGN` | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `KYC_CASE_REVIEW` | ❌ | ✅ Assigned | ✅ Authorized | ❌ | ❌ | ✅ All | ✅ All | ❌ | ❌ |
+| `KYC_CASE_RECOMMEND` | ❌ | ✅ Assigned | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `KYC_CASE_REQUEST_INFO` | ❌ | ✅ Assigned | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `KYC_CASE_APPROVE` | ❌ | ❌ | ✅ Authorized | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `KYC_CASE_REJECT` | ❌ | ❌ | ✅ Authorized | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| `KYC_CASE_RETURN` | ❌ | ❌ | ✅ Authorized | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| `KYC_CASE_ESCALATE` | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| `KYC_AUDIT_READ` | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `ACCOUNT_CREATE` | ✅ Own | ❌ | ❌ | ❌ | ✅ All | ❌ | ✅ All | ❌ | ❌ |
+| `ACCOUNT_READ` | ✅ Own | ✅ Assigned | ✅ Authorized | ✅ All | ✅ All | ✅ All | ✅ All | ✅ All | ❌ |
+| `ACCOUNT_DEPOSIT` | ✅ Own | ❌ | ❌ | ❌ | ✅ All | ❌ | ✅ All | ❌ | ✅ |
+| `ACCOUNT_WITHDRAW` | ✅ Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ All | ❌ | ❌ |
+| `ACCOUNT_TRANSFER` | ✅ Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ All | ❌ | ❌ |
+| `ACCOUNT_STATEMENT` | ✅ Own | ✅ Assigned | ✅ Authorized | ✅ All | ✅ All | ✅ All | ✅ All | ✅ All | ❌ |
+| `ACCOUNT_CLOSE` | ✅ Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `TRANSFER_INITIATE` | ✅ Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ All | ❌ | ❌ |
+| `TRANSFER_HISTORY` | ✅ Own | ✅ Assigned | ✅ Authorized | ✅ All | ✅ All | ✅ All | ✅ All | ✅ All | ❌ |
+| `TRANSFER_MONITOR` | ❌ | ❌ | ❌ | ❌ | ✅ All | ✅ All | ✅ All | ✅ All | ❌ |
+| `ADMIN_USER_MANAGE` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `ADMIN_ROLE_ASSIGN` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `ADMIN_CONFIG_MANAGE` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `AUDIT_TRAIL_READ` | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `SERVICE_INTERNAL` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+### 3.5 Resource Ownership & Access Scopes
+
+| Resource | Ownership Model | Access Scope Rules |
+|----------|-----------------|-------------------|
+| **Customer Profile** | Owned by Customer (auth_user_id) | Customer: Own only. KYC_OFFICER: Assigned cases only. KYC_MANAGER: Authorized cases. SUPPORT/OPERATIONS/COMPLIANCE: All. |
+| **KYC Documents** | Owned by Customer (auth_user_id) | Customer: Own only. KYC_OFFICER: Assigned cases. KYC_MANAGER: Authorized cases. Others: Role-based. |
+| **KYC Case** | Owned by Customer, Assigned to Officer | Customer: View own case status. KYC_OFFICER: Assigned cases only. KYC_MANAGER: Authorized cases (not own reviews). ADMIN/COMPLIANCE: All. |
+| **Accounts** | Owned by Customer (auth_user_id) | Customer: Own accounts. Staff: Role-based access. |
+| **Transactions** | Owned by Customer (auth_user_id) | Customer: Own transactions. Staff: Role-based access. |
+| **Audit Trail** | System-owned | COMPLIANCE/AUDITOR/ADMIN: All. Others: None. |
+
+### 3.6 Access Control Matrix (API Endpoint Level)
+
+| Endpoint Pattern | CUSTOMER | KYC_OFFICER | KYC_MANAGER | SUPPORT_AGENT | OPERATIONS_OFFICER | COMPLIANCE_OFFICER | ADMIN | AUDITOR | SERVICE |
+|------------------|:--------:|:-----------:|:-----------:|:-------------:|:------------------:|:------------------:|:-----:|:-------:|:-------:|
+| `POST /auth/register` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `POST /auth/login` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `POST /auth/refresh` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `POST /auth/mfa/*` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `GET /users/profile` | Own | Assigned | Authorized | All | All | All | All | All | ❌ |
+| `PUT /users/profile` | Own | ❌ | ❌ | ❌ | ❌ | ❌ | All | ❌ | ❌ |
+| `POST /users/kyc/upload` | Own | ❌ | ❌ | ❌ | ❌ | ❌ | All | ❌ | ❌ |
+| `GET /users/kyc/documents/*` | Own | Assigned | Authorized | Limited | All | All | All | All | ❌ |
+| `GET /kyc/cases` | Own | Assigned | Authorized | Limited | All | All | All | All | ❌ |
+| `GET /kyc/cases/{caseId}` | Own | Assigned | Authorized | Limited | All | All | All | All | ❌ |
+| `POST /kyc/cases/{caseId}/assign` | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `POST /kyc/cases/{caseId}/review` | ❌ | Assigned | ❌ | ❌ | ❌ | All | All | ❌ | ❌ |
+| `POST /kyc/cases/{caseId}/recommend` | ❌ | Assigned | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `POST /kyc/cases/{caseId}/request-info` | ❌ | Assigned | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `POST /kyc/cases/{caseId}/approve` | ❌ | ❌ | Authorized* | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `POST /kyc/cases/{caseId}/reject` | ❌ | ❌ | Authorized* | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| `POST /kyc/cases/{caseId}/return` | ❌ | ❌ | Authorized* | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| `POST /kyc/cases/{caseId}/escalate` | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| `GET /kyc/audit/*` | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `POST /accounts/create` | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| `GET /accounts/balance/*` | Own | Assigned | Authorized | Own | All | All | All | All | ❌ |
+| `POST /accounts/deposit` | Own | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ |
+| `POST /accounts/withdraw` | Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `POST /accounts/transfer` | Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `GET /accounts/statement/*` | Own | Assigned | Authorized | Own | All | All | All | All | ❌ |
+| `POST /accounts/{accNo}/close` | Own | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `POST /transactions/transfer` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `GET /transactions/*` | Own | Assigned | Authorized | Own | All | All | All | All | ❌ |
+| `GET /admin/**` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `GET /actuator/health` | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /actuator/**` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+
+> **Note:** `Authorized*` means KYC_MANAGER can only approve/reject/return cases they did NOT review (enforced separation of duties).
+
+### 3.7 User-to-Role Assignment
+
+| Assignment Method | Roles | Description |
+|-------------------|-------|-------------|
+| **Self-registration** | CUSTOMER | Assigned automatically on successful registration and email verification |
+| **Admin assignment** | KYC_OFFICER, KYC_MANAGER, SUPPORT_AGENT, OPERATIONS_OFFICER, COMPLIANCE_OFFICER | Assigned by ADMIN via `/admin/users/{userId}/roles` |
+| **Manager assignment** | KYC_OFFICER | KYC_MANAGER can assign officers to cases (not roles directly) |
+| **System assignment** | ROLE_SERVICE | Internal services via service accounts |
 
 ---
 
 ## 4. Microservices Architecture
 
-### 4.1 Service Topology
+### 4.1 Service Topology (Updated)
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'edgeLabelBackground': '#f8fafc'}}}%%
@@ -189,196 +332,289 @@ graph TB
     end
 
     subgraph DISCOVERY ["Service Discovery & Config"]
-        EUREKA[Eureka Server<br/>Port 8761]
+        K8S_DNS[Kubernetes DNS<br/>Production Service Discovery]
         CONFIG[Config Server<br/>Port 8888]
+        EUREKA[Eureka Server<br/>Port 8761<br/><i>Local Development Only</i>]
     end
 
     subgraph CORE ["Core Banking Services"]
         AUTH[Auth Service<br/>Port 8081]
         USER[User Service<br/>Port 8082]
+        KYC[KYC Workflow Service<br/>Port 8087<br/><i>New</i>]
         ACC[Account Service<br/>Port 8083]
         TXN[Transaction Service<br/>Port 8084]
         NOTIF[Notification Service<br/>Port 8085]
         LEDGER[Ledger Service<br/>Port 8086<br/><i>Planned</i>]
+        COMPLIANCE[Compliance Service<br/>Port 8088<br/><i>Planned</i>]
     end
 
     subgraph DATA ["Data Layer"]
-        MYSQL[(MySQL 8.0<br/>Multi-Database)]
-        REDIS[(Redis 7<br/>Cache & Rate Limit)]
-        KAFKA[Kafka 3.8<br/>Event Bus]
-        S3[(AWS S3<br/>KYC Documents)]
+        RDS[(AWS RDS MySQL 8.0<br/>Multi-Schema, KMS Encrypted)]
+        REDIS[(Redis 7<br/>ElastiCache, Cache & Rate Limit)]
+        KAFKA[Kafka 3.8<br/>MSK, Event Bus]
+        S3[(AWS S3<br/>SSE-KMS, KYC Documents)]
     end
 
     CLIENT --> GW
     ADMIN --> GW
     EXT_API --> GW
 
-    GW --> EUREKA
+    GW --> K8S_DNS
     GW --> CONFIG
     GW --> AUTH
     GW --> USER
+    GW --> KYC
     GW --> ACC
     GW --> TXN
     GW --> NOTIF
     GW -.-> LEDGER
+    GW -.-> COMPLIANCE
 
-    AUTH --> EUREKA
+    AUTH --> K8S_DNS
     AUTH --> CONFIG
-    AUTH --> MYSQL
+    AUTH --> RDS
     AUTH --> KAFKA
     AUTH --> REDIS
 
-    USER --> EUREKA
+    USER --> K8S_DNS
     USER --> CONFIG
-    USER --> MYSQL
+    USER --> RDS
     USER --> KAFKA
     USER --> S3
 
-    ACC --> EUREKA
+    KYC --> K8S_DNS
+    KYC --> CONFIG
+    KYC --> RDS
+    KYC --> KAFKA
+    KYC --> USER
+    KYC --> AUTH
+
+    ACC --> K8S_DNS
     ACC --> CONFIG
-    ACC --> MYSQL
+    ACC --> RDS
     ACC --> KAFKA
     ACC --> REDIS
     ACC --> USER
+    ACC --> KYC
 
-    TXN --> EUREKA
+    TXN --> K8S_DNS
     TXN --> CONFIG
-    TXN --> MYSQL
+    TXN --> RDS
     TXN --> KAFKA
     TXN --> ACC
 
-    NOTIF --> EUREKA
+    NOTIF --> K8S_DNS
     NOTIF --> CONFIG
     NOTIF --> KAFKA
 
-    LEDGER --> EUREKA
+    LEDGER --> K8S_DNS
     LEDGER --> CONFIG
-    LEDGER --> MYSQL
+    LEDGER --> RDS
     LEDGER --> KAFKA
     LEDGER --> ACC
     LEDGER --> TXN
+
+    COMPLIANCE --> K8S_DNS
+    COMPLIANCE --> CONFIG
+    COMPLIANCE --> RDS
+    COMPLIANCE --> KAFKA
+    COMPLIANCE --> KYC
+    COMPLIANCE --> USER
+
+    EUREKA -.->|Local Dev Only| AUTH
+    EUREKA -.->|Local Dev Only| USER
+    EUREKA -.->|Local Dev Only| KYC
+    EUREKA -.->|Local Dev Only| ACC
+    EUREKA -.->|Local Dev Only| TXN
+    EUREKA -.->|Local Dev Only| NOTIF
 ```
 
-### 4.2 Service Specifications
+### 4.2 Service Specifications (Updated)
 
 #### 4.2.1 Auth Service (Port 8081)
 | Aspect | Detail |
 |--------|--------|
-| **Database** | `citicore_authdb` |
-| **Primary Entities** | User, Role, RefreshToken |
-| **Key Functions** | Registration, Login, JWT issuance, Refresh rotation, Email verification, Password reset, MFA (TOTP) |
-| **Published Events** | `otp-verification-topic` → VerificationOtpEvent |
-| **Security** | BCrypt, JWT HS256 (15min access, 7day refresh), Rate limiting (5 req/min login) |
+| **Database** | `citicore_authdb` schema in AWS RDS MySQL |
+| **Primary Entities** | User, Role, RefreshToken, UserRole, LoginAttempt |
+| **Key Functions** | Registration, Login, JWT issuance, Refresh rotation, Email verification, Password reset, MFA (TOTP), Account lockout, Rate limiting |
+| **Published Events** | `otp-verification-topic` → VerificationOtpEvent, `user-created-topic` → UserCreatedEvent |
+| **Security** | BCrypt, JWT HS256 (15min access, 7day refresh), Rate limiting (5 req/min login), Failed attempt tracking |
+| **Service Discovery** | Kubernetes DNS (production); Eureka (local Docker Compose) |
+| **Secrets** | DB credentials from AWS Secrets Manager |
 
 #### 4.2.2 User Service (Port 8082)
 | Aspect | Detail |
 |--------|--------|
-| **Database** | `citicore_userdb` |
+| **Database** | `citicore_userdb` schema in AWS RDS MySQL |
 | **Primary Entities** | UserProfile, KycDocument |
 | **Key Functions** | Profile CRUD, KYC document upload (S3), KYC status workflow, Admin KYC review, OCR integration |
 | **Published Events** | `kyc-topic` → KycEvent (SUBMITTED/APPROVED/REJECTED) |
-| **Feign Exposes** | `GET /api/v1/users/kyc-status/{userId}` → boolean |
+| **Feign Exposes** | `GET /api/v1/users/kyc-status/{userId}` → boolean, `GET /api/v1/users/profile/{userId}` → UserProfile |
+| **Service Discovery** | Kubernetes DNS (production); Eureka (local Docker Compose) |
+| **Secrets** | DB credentials from AWS Secrets Manager |
 
-#### 4.2.3 Account Service (Port 8083)
+#### 4.2.3 KYC Workflow Service (Port 8087) - **NEW**
 | Aspect | Detail |
 |--------|--------|
-| **Database** | `citicore_account` (Primary/Replica) |
-| **Primary Entities** | Account, AccountStatement, AccountOutboxEvent, AccountSequence |
-| **Key Functions** | Account CRUD (SAVINGS/CURRENT), Deposit/Withdraw, Balance queries (Redis cache), Statements, Transfer validation, Auth holds, Interest accrual, PDF statements, Double-entry ledger posting |
+| **Database** | `citicore_kycdb` schema in AWS RDS MySQL |
+| **Primary Entities** | KycCase, KycCaseAssignment, KycCaseHistory, KycReviewFinding, KycDocumentRef |
+| **Key Functions** | Case creation from submission, Case assignment to officers, Maker-checker workflow, State machine enforcement, Audit trail, Escalation, SLA monitoring |
+| **Published Events** | `kyc-case-topic` → KycCaseEvent (CREATED, ASSIGNED, REVIEWED, RECOMMENDED, APPROVED, REJECTED, RETURNED, ESCALATED), `kyc-notification-topic` → KycNotificationEvent |
+| **Feign Clients** | UserClient (profile, documents), AuthClient (user roles), NotificationClient (notifications) |
+| **Kafka Consumers** | `kyc-submission-topic` (from User Service), `kyc-document-topic` (from User Service) |
+| **Service Discovery** | Kubernetes DNS (production); Eureka (local Docker Compose) |
+| **Secrets** | DB credentials from AWS Secrets Manager |
+
+#### 4.2.4 Account Service (Port 8083)
+| Aspect | Detail |
+|--------|--------|
+| **Database** | `citicore_account` schema in AWS RDS MySQL (Primary/Replica) |
+| **Primary Entities** | Account, AccountStatement, AccountOutboxEvent, AccountSequence, AccountHold |
+| **Key Functions** | Account CRUD (SAVINGS/CURRENT), Deposit/Withdraw, Balance queries (Redis cache), Statements, Transfer validation, Auth holds, Interest accrual, PDF statements, Dual balance (available/ledger), Double-entry ledger posting |
 | **Database Routing** | Primary: Writes | Replica: Reads | Redis: Balance cache (5min TTL) |
-| **Kafka Consumers** | `transfer-requested-topic` (DebitConsumer), `debit-success-topic` (CreditConsumer), `reversal-topic` (ReversalConsumer) |
-| **Published Events** | `account-events-topic`, `debit-success-topic`, `debit-failed-topic`, `credit-success-topic`, `credit-failed-topic`, `reversal-success-topic` |
-| **Feign Client** | UserClient → KYC status check |
+| **Kafka Consumers** | `transfer-requested-topic` (DebitConsumer), `debit-success-topic` (CreditConsumer), `reversal-topic` (ReversalConsumer), `kyc-case-topic` (KYC_APPROVED → enable account creation) |
+| **Published Events** | `account-events-topic`, `debit-success-topic`, `debit-failed-topic`, `credit-success-topic`, `credit-failed-topic`, `reversal-success-topic`, `balance-hold-topic` |
+| **Feign Client** | UserClient → KYC status check, KYCWorkflowClient → case status |
+| **Service Discovery** | Kubernetes DNS (production); Eureka (local Docker Compose) |
+| **Secrets** | DB credentials from AWS Secrets Manager |
 
-#### 4.2.4 Transaction Service (Port 8084)
+#### 4.2.5 Transaction Service (Port 8084)
 | Aspect | Detail |
 |--------|--------|
-| **Database** | `citicore_transactiondb` |
-| **Primary Entities** | Transaction, OutboxEvent, IdempotencyKey |
+| **Database** | `citicore_transactiondb` schema in AWS RDS MySQL |
+| **Primary Entities** | Transaction, OutboxEvent, IdempotencyKey, DailyLimit |
 | **Key Functions** | Transfer initiation, Saga orchestration, Daily limits, Idempotency, History & status |
 | **Saga Flow** | INITIATED → DEBIT_SUCCESS → CREDIT_SUCCESS / FAILED → REVERSED |
-| **Feign Client** | AccountFeignClient → validateTransfer |
+| **Feign Client** | AccountFeignClient → validateTransfer, KYCWorkflowClient → check KYC status |
 | **Kafka Consumers** | `credit-success-topic`, `credit-failed-topic`, `reversal-success-topic` |
+| **Service Discovery** | Kubernetes DNS (production); Eureka (local Docker Compose) |
+| **Secrets** | DB credentials from AWS Secrets Manager |
 
-#### 4.2.5 Notification Service (Port 8085)
+#### 4.2.6 Notification Service (Port 8085)
 | Aspect | Detail |
 |--------|--------|
 | **Database** | None (stateless) |
-| **Key Functions** | Email delivery (SMTP/SendGrid), HTML templates, Multi-event consumption |
-| **Kafka Consumers** | `credit-success-topic`, `credit-failed-topic`, `reversal-success-topic`, `kyc-topic`, `otp-verification-topic` |
+| **Key Functions** | Email delivery (SMTP/SendGrid), SMS (planned), HTML templates, Multi-event consumption, Notification preferences |
+| **Kafka Consumers** | `credit-success-topic`, `credit-failed-topic`, `reversal-success-topic`, `kyc-topic`, `kyc-case-topic`, `otp-verification-topic`, `kyc-notification-topic` |
+| **Service Discovery** | Kubernetes DNS (production); Eureka (local Docker Compose) |
 
-#### 4.2.6 Ledger Service (Port 8086) - Planned
+#### 4.2.7 Ledger Service (Port 8086) - Planned
 | Aspect | Detail |
 |--------|--------|
-| **Database** | `citicore_ledgerdb` |
+| **Database** | `citicore_ledgerdb` schema in AWS RDS MySQL |
 | **Primary Entities** | LedgerAccount, JournalEntry, JournalLine, LedgerBalance |
 | **Key Functions** | Chart of Accounts, Double-entry posting, Trial balance, Period-end close, GL reconciliation, Regulatory reporting, Immutable audit trail |
 
-#### 4.2.7 Platform Services
+#### 4.2.8 Compliance Service (Port 8088) - Planned
+| Aspect | Detail |
+|--------|--------|
+| **Database** | `citicore_compliancedb` schema in AWS RDS MySQL |
+| **Primary Entities** | SanctionsScreening, PEPCheck, TransactionMonitoring, SuspiciousActivityReport, RegulatoryReport |
+| **Key Functions** | Real-time sanctions/PEP screening, Transaction monitoring (AML), SAR filing, Regulatory report generation |
+
+#### 4.2.9 Platform Services
 | Service | Port | Purpose |
 |---------|------|---------|
-| **API Gateway** | 8080 | Reactive routing, JWT validation, Rate limiting, Circuit breakers, Resilience4j |
+| **API Gateway** | 8080 | Reactive routing, JWT validation, Rate limiting, Circuit breakers, Resilience4j, RBAC enforcement |
 | **Config Server** | 8888 | Centralized config (native profile), Spring Cloud Bus Kafka refresh |
-| **Eureka Server** | 8761 | Service registry & discovery |
+| **Eureka Server** | 8761 | Service registry & discovery (Local Development Only) |
+| **Kubernetes DNS** | N/A | Production service discovery via CoreDNS |
 
 ---
 
 ## 5. Database Architecture
 
-### 5.1 Database Topology
+### 5.1 Database Topology (Updated)
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
 graph TB
-    subgraph MYSQL_INSTANCE ["MySQL 8.0 Instance"]
-        AUTH_DB[(citicore_authdb<br/>users, roles, user_roles, refresh_tokens)]
-        ACC_DB[(citicore_account<br/>accounts, account_statements,<br/>account_outbox, account_sequences)]
-        TXN_DB[(citicore_transactiondb<br/>transactions, outbox_events,<br/>idempotency_keys)]
-        USER_DB[(citicore_userdb<br/>user_profiles, kyc_documents)]
-        LEDGER_DB[(citicore_ledgerdb<br/>ledger_accounts, journal_entries,<br/>journal_lines, ledger_balances<br/><i>Planned</i>)]
+    subgraph RDS_MYSQL ["AWS RDS for MySQL 8.0 (Single Deployment, KMS Encrypted)"]
+        AUTH_SCHEMA[(citicore_authdb<br/>users, roles, user_roles, refresh_tokens, login_attempts)]
+        KYC_SCHEMA[(citicore_kycdb<br/>kyc_cases, kyc_case_assignments,<br/>kyc_case_history, kyc_review_findings,<br/>kyc_document_refs)]
+        ACC_SCHEMA[(citicore_account<br/>accounts, account_statements,<br/>account_outbox, account_sequences,<br/>account_holds)]
+        TXN_SCHEMA[(citicore_transactiondb<br/>transactions, outbox_events,<br/>idempotency_keys, daily_limits)]
+        USER_SCHEMA[(citicore_userdb<br/>user_profiles, kyc_documents)]
+        LEDGER_SCHEMA[(citicore_ledgerdb<br/>ledger_accounts, journal_entries,<br/>journal_lines, ledger_balances<br/><i>Planned</i>)]
+        COMPLIANCE_SCHEMA[(citicore_compliancedb<br/>sanctions, pep, monitoring,<br/>sar, reports<br/><i>Planned</i>)]
     end
 
-    subgraph REDIS_CLUSTER ["Redis Cluster"]
-        CACHE[(Cache: Balance, Session, Rate Limit)]
+    subgraph REDIS_CLUSTER ["Redis Cluster (ElastiCache)"]
+        CACHE[(Cache: Balance, Session, Rate Limit,<br/>Case Assignments, User Permissions)]
     end
 
-    subgraph KAFKA_CLUSTER ["Kafka Cluster"]
-        TOPICS[Topics: 3 partitions, RF=1<br/>transfer-requested, debit-success,<br/>credit-success, reversal, kyc, otp,<br/>account-events, DLQs]
+    subgraph KAFKA_CLUSTER ["Kafka Cluster (MSK)"]
+        TOPICS[Topics: 3 partitions, RF=3<br/>transfer-requested, debit-success,<br/>credit-success, reversal, kyc, kyc-case,<br/>kyc-notification, otp, account-events, DLQs]
     end
 
-    AUTH_SVC[Auth Service] --> AUTH_DB
-    USER_SVC[User Service] --> USER_DB
-    ACC_SVC[Account Service] --> ACC_DB
+    subgraph S3_STORAGE ["AWS S3 (SSE-KMS Encrypted)"]
+        KYC_DOCS[(KYC Documents)]
+    end
+
+    AUTH_SVC[Auth Service] --> AUTH_SCHEMA
+    USER_SVC[User Service] --> USER_SCHEMA
+    KYC_SVC[KYC Workflow Service] --> KYC_SCHEMA
+    KYC_SVC --> CACHE
+    ACC_SVC[Account Service] --> ACC_SCHEMA
     ACC_SVC --> CACHE
-    TXN_SVC[Transaction Service] --> TXN_DB
-    LEDGER_SVC[Ledger Service] --> LEDGER_DB
+    TXN_SVC[Transaction Service] --> TXN_SCHEMA
+    LEDGER_SVC[Ledger Service] --> LEDGER_SCHEMA
+    COMPLIANCE_SVC[Compliance Service] --> COMPLIANCE_SCHEMA
     ALL_SVC[All Services] --> KAFKA_CLUSTER
-    USER_SVC --> S3[(AWS S3)]
+    USER_SVC --> KYC_DOCS
+    KYC_SVC --> KYC_DOCS
 ```
 
-### 5.2 Schema Ownership
+### 5.2 Schema Ownership (Updated)
 
-| Database | Owner Service | Tables | Key Constraints |
+| Schema | Owner Service | Tables | Key Constraints |
 |----------|---------------|--------|-----------------|
-| `citicore_authdb` | Auth Service | users, roles, user_roles, refresh_tokens | PK, FK (user_roles), Unique (email, token) |
+| `citicore_authdb` | Auth Service | users, roles, user_roles, refresh_tokens, login_attempts | PK, FK (user_roles), Unique (email, token), Index (email, status) |
+| `citicore_kycdb` | KYC Workflow Service | kyc_cases, kyc_case_assignments, kyc_case_history, kyc_review_findings, kyc_document_refs | PK, FK (assignments→cases, history→cases, findings→cases), Unique (case_number), Index (status, assignee, customer) |
 | `citicore_userdb` | User Service | user_profiles, kyc_documents | PK, FK (kyc_documents→user_profiles), Unique (auth_user_id, email, phone) |
-| `citicore_account` | Account Service | accounts, account_statements, account_outbox, account_sequences | PK, Unique (account_number, txn_ref per account), Check (balance >= 0, min_balance) |
-| `citicore_transactiondb` | Transaction Service | transactions, outbox_events, idempotency_keys | PK, Unique (txn_ref, idempotency_key per user), FK (planned) |
+| `citicore_account` | Account Service | accounts, account_statements, account_outbox, account_sequences, account_holds | PK, Unique (account_number, txn_ref per account), Check (balance >= 0, min_balance), FK (holds→accounts) |
+| `citicore_transactiondb` | Transaction Service | transactions, outbox_events, idempotency_keys, daily_limits | PK, Unique (txn_ref, idempotency_key per user), FK (planned), Check (amount > 0) |
 | `citicore_ledgerdb` | Ledger Service | ledger_accounts, journal_entries, journal_lines, ledger_balances | PK, FK (journal_lines→journal_entries, ledger_accounts), Check (balanced journal, one-side) |
+| `citicore_compliancedb` | Compliance Service | sanctions_screening, pep_checks, transaction_monitoring, sar, regulatory_reports | PK, FK, Index (customer_id, screening_date, status) |
 
-### 5.3 Cross-Service Referential Integrity
+### 5.3 Database Security Configuration
 
-> **Note:** MySQL does not support cross-database foreign keys. The platform uses **application-level integrity** with reconciliation jobs.
+| Security Control | Implementation |
+|------------------|----------------|
+| **Encryption at Rest** | AWS RDS storage encryption with customer-managed KMS key; covers backups and snapshots |
+| **Encryption in Transit** | TLS 1.2+ mandatory; `require_secure_transport=ON` on RDS; certificate validation enabled |
+| **Secrets Management** | Database credentials in AWS Secrets Manager; IAM workload identity for EKS pods |
+| **Schema Isolation** | Separate database users per service; GRANT only on owned schema; no cross-schema permissions |
+| **Application-Level Encryption** | Selective envelope encryption for sensitive PII fields (PAN, Aadhaar, etc.) using AWS KMS |
+| **Key Rotation** | KMS automatic key rotation annually; manual rotation for application-level keys |
+
+### 5.4 Cross-Service Referential Integrity (Updated)
+
+> **Note:** Even within a single RDS instance, MySQL does not support cross-schema foreign keys with different owners. The platform uses **application-level integrity** with reconciliation jobs.
 
 | Child Reference | Parent Reference | Integrity Mechanism |
 |-----------------|------------------|---------------------|
-| `accounts.auth_user_id` | `auth.users.id` | Feign validation on create; Daily reconciliation job |
-| `account_statements.account_number` | `accounts.account_number` | Application check; DB index |
-| `transactions.auth_user_id` | `auth.users.id` | Feign validation; Reconciliation job |
-| `transactions.from_account` | `accounts.account_number` | Feign validateTransfer; Reconciliation job |
-| `transactions.to_account` | `accounts.account_number` | Feign validateTransfer; Reconciliation job |
-| `user_profiles.auth_user_id` | `auth.users.id` | Auth service user creation event; Reconciliation job |
-| `idempotency_keys.auth_user_id` | `auth.users.id` | Auth service validation |
+| `citicore_account.accounts.auth_user_id` | `citicore_authdb.users.id` | Feign validation on create; Daily reconciliation job |
+| `citicore_account.account_statements.account_number` | `citicore_account.accounts.account_number` | Application check; DB index |
+| `citicore_transactiondb.transactions.auth_user_id` | `citicore_authdb.users.id` | Feign validation; Reconciliation job |
+| `citicore_transactiondb.transactions.from_account` | `citicore_account.accounts.account_number` | Feign validateTransfer; Reconciliation job |
+| `citicore_transactiondb.transactions.to_account` | `citicore_account.accounts.account_number` | Feign validateTransfer; Reconciliation job |
+| `citicore_userdb.user_profiles.auth_user_id` | `citicore_authdb.users.id` | Auth service user creation event; Reconciliation job |
+| `citicore_transactiondb.idempotency_keys.auth_user_id` | `citicore_authdb.users.id` | Auth service validation |
+| `citicore_kycdb.kyc_cases.auth_user_id` | `citicore_authdb.users.id` | User service validation; Reconciliation job |
+| `citicore_kycdb.kyc_case_assignments.assignee_id` | `citicore_authdb.users.id` | Auth service role check (KYC_OFFICER); Reconciliation job |
+| `citicore_kycdb.kyc_case_assignments.reviewer_id` | `citicore_authdb.users.id` | Auth service role check (KYC_MANAGER); Reconciliation job |
+
+### 5.5 Future Migration Path
+
+| Phase | Trigger | Action |
+|-------|---------|--------|
+| **Phase 1 (Current)** | Initial deployment | Single RDS with separate schemas, separate credentials |
+| **Phase 2** | Scale/Isolation needs | Split high-throughput schemas (e.g., transactiondb) to dedicated RDS instances |
+| **Phase 3** | Regulatory/Compliance | Independent database deployments per service with dedicated VPC/subnet isolation |
+| **Phase 4** | Multi-region | Cross-region read replicas; active-active for critical schemas |
+
+Migration uses: Schema export/import, DNS switchover, dual-write period, CDC for sync.
 
 ### 5.4 Primary/Replica Routing (Account Service)
 
@@ -391,15 +627,15 @@ graph LR
     end
     
     subgraph MYSQL_PRIMARY ["Primary (Writer)"]
-        PRIMARY[(accounts<br/>account_statements<br/>account_outbox<br/>account_sequences)]
+        PRIMARY[(accounts<br/>account_statements<br/>account_outbox<br/>account_sequences<br/>account_holds)]
     end
     
     subgraph MYSQL_REPLICA ["Replica (Reader)"]
-        REPLICA[(accounts<br/>account_statements<br/>account_outbox<br/>account_sequences)]
+        REPLICA[(accounts<br/>account_statements<br/>account_outbox<br/>account_sequences<br/>account_holds)]
     end
     
     subgraph REDIS_CACHE ["Redis Cache"]
-        CACHE[(Balance Cache<br/>TTL: 5 min)]
+        CACHE[(Balance Cache<br/>TTL: 5 min<br/>Case Assignment Cache<br/>Permission Cache)]
     end
 
     APP --> ROUTING
@@ -414,43 +650,47 @@ graph LR
 
 ## 6. Service Communication Patterns
 
-### 6.1 Communication Matrix
+### 6.1 Communication Matrix (Updated)
 
-| From \ To | Auth | User | Account | Transaction | Notification | Ledger | Gateway |
-|-----------|------|------|---------|-------------|--------------|--------|---------|
-| **Client** | HTTPS | HTTPS | HTTPS | HTTPS | - | HTTPS | HTTPS |
-| **Gateway** | Feign | Feign | Feign | Feign | - | Feign | - |
-| **Auth** | - | - | - | - | Kafka | - | - |
-| **User** | - | - | - | - | Kafka | - | - |
-| **Account** | - | Feign | - | Kafka | Kafka | Kafka | - |
-| **Transaction** | - | - | Feign | - | Kafka | Kafka | - |
-| **Notification** | - | - | - | - | - | - | - |
-| **Ledger** | - | - | Feign | Feign | Kafka | - | - |
+| From \ To | Auth | User | KYC WF | Account | Transaction | Notification | Ledger | Compliance | Gateway |
+|-----------|------|------|--------|---------|-------------|--------------|--------|------------|---------|
+| **Client** | HTTPS | HTTPS | HTTPS | HTTPS | HTTPS | - | HTTPS | HTTPS | HTTPS |
+| **Gateway** | Feign | Feign | Feign | Feign | Feign | - | Feign | Feign | - |
+| **Auth** | - | - | - | - | - | Kafka | - | - | - |
+| **User** | - | - | Kafka | - | - | Kafka | - | - | - |
+| **KYC WF** | Feign | Feign | - | - | - | Kafka | - | Kafka | - |
+| **Account** | - | Feign | Feign | - | Kafka | Kafka | Kafka | - | - |
+| **Transaction** | - | - | Feign | Feign | - | Kafka | Kafka | - | - |
+| **Notification** | - | - | - | - | - | - | - | - | - |
+| **Ledger** | - | - | - | Feign | Feign | Kafka | - | - | - |
+| **Compliance** | - | Feign | Feign | - | Feign | - | - | - | - |
 
-### 6.2 Synchronous Communication (Feign/REST)
+### 6.2 Synchronous Communication (Feign/REST) - KYC Flow
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
 sequenceDiagram
     participant Client
-    participant Gateway
-    participant TxnSvc as Transaction Service
-    participant AccSvc as Account Service
-    participant UserSvc as User Service
+    participant GW as API Gateway
+    participant KYC as KYC Workflow Service
+    participant USER as User Service
+    participant AUTH as Auth Service
+    participant NOTIF as Notification Service
     
-    Client->>Gateway: POST /api/v1/transactions/transfer
-    Gateway->>TxnSvc: Forward with JWT
-    TxnSvc->>TxnSvc: Validate request, daily limit
-    TxnSvc->>AccSvc: Feign: validateTransfer(fromAcc, amount)
-    AccSvc->>UserSvc: Feign: getKycStatus(userId)
-    UserSvc-->>AccSvc: KYC Status (boolean)
-    AccSvc-->>TxnSvc: Validation Result
-    TxnSvc->>TxnSvc: Save Transaction + Outbox (ATOMIC)
-    TxnSvc-->>Gateway: 202 Accepted (txnRef)
-    Gateway-->>Client: 202 Accepted
+    Client->>GW: POST /api/v1/kyc/cases/{caseId}/review (KYC_OFFICER)
+    GW->>KYC: Forward with JWT + RBAC headers
+    KYC->>KYC: Validate KYC_OFFICER role, case assignment
+    KYC->>USER: Feign: GET /api/v1/users/profile/{customerId}
+    USER-->>KYC: Customer Profile
+    KYC->>USER: Feign: GET /api/v1/users/kyc/documents/{customerId}
+    USER-->>KYC: KYC Documents (S3 URLs)
+    KYC->>AUTH: Feign: GET /api/v1/auth/users/{officerId}/roles
+    AUTH-->>KYC: Officer Roles (verify KYC_OFFICER)
+    KYC-->>GW: Case data + documents
+    GW-->>Client: 200 OK
 ```
 
-### 6.3 Asynchronous Communication (Kafka Events)
+### 6.3 Asynchronous Communication (Kafka Events) - Updated
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
@@ -459,18 +699,28 @@ graph TB
         CLIENT[Client] --> GW[API Gateway]
         GW --> AUTH[Auth Service]
         GW --> USER[User Service]
+        GW --> KYC[KYC Workflow Service]
         GW --> ACC[Account Service]
         GW --> TXN[Transaction Service]
         
         TXN -.->|validateTransfer| ACC
-        ACC -.->|getKycStatus| USER
+        ACC -.->|getKycStatus| KYC
+        ACC -.->|getProfile| USER
+        KYC -.->|getProfile| USER
+        KYC -.->|verifyRoles| AUTH
     end
     
     subgraph ASYNC ["Asynchronous (Kafka)"]
         KAFKA[(Kafka Event Bus)]
         
         AUTH -->|otp-verification-topic| KAFKA
+        AUTH -->|user-created-topic| KAFKA
         USER -->|kyc-topic| KAFKA
+        USER -->|kyc-submission-topic| KAFKA
+        USER -->|kyc-document-topic| KAFKA
+        
+        KYC -->|kyc-case-topic| KAFKA
+        KYC -->|kyc-notification-topic| KAFKA
         
         ACC -->|account-events-topic| KAFKA
         ACC -->|debit-success-topic| KAFKA
@@ -478,12 +728,14 @@ graph TB
         ACC -->|credit-success-topic| KAFKA
         ACC -->|credit-failed-topic| KAFKA
         ACC -->|reversal-success-topic| KAFKA
+        ACC -->|balance-hold-topic| KAFKA
         
         TXN -->|transfer-requested-topic| KAFKA
         
         KAFKA -->|transfer-requested-topic| ACC
         KAFKA -->|debit-success-topic| ACC
         KAFKA -->|reversal-topic| ACC
+        KAFKA -->|kyc-case-topic| ACC
         
         KAFKA -->|credit-success-topic| TXN
         KAFKA -->|credit-failed-topic| TXN
@@ -493,17 +745,30 @@ graph TB
         KAFKA -->|credit-failed-topic| NOTIF
         KAFKA -->|reversal-success-topic| NOTIF
         KAFKA -->|kyc-topic| NOTIF
+        KAFKA -->|kyc-case-topic| NOTIF
+        KAFKA -->|kyc-notification-topic| NOTIF
         KAFKA -->|otp-verification-topic| NOTIF
         
+        KAFKA -->|kyc-case-topic| COMPLIANCE[Compliance Service]
         KAFKA -.->|Planned| LEDGER[Ledger Service]
     end
 ```
+
+### 6.4 Service Discovery Configuration
+
+| Environment | Mechanism | Implementation |
+|-------------|-----------|----------------|
+| **Production (EKS)** | Kubernetes DNS (CoreDNS) | `service.namespace.svc.cluster.local`; Headless services for direct pod access |
+| **Local (Docker Compose)** | Netflix Eureka | `eureka-server:8761`; All services register with Eureka |
+| **Transition Strategy** | Dual-write period | Services register with both during migration; Eureka deprecated after validation |
+| **Client-Side Load Balancing** | Spring Cloud LoadBalancer | Reactor-based; integrates with Kubernetes EndpointSlices |
+| **Service Mesh (Future)** | Istio/Linkerd | mTLS, traffic splitting, advanced observability |
 
 ---
 
 ## 7. Event-Driven Architecture
 
-### 7.1 Kafka Topic Design
+### 7.1 Kafka Topic Design (Updated)
 
 | Topic | Partitions | Retention | Key | Producers | Consumers | Purpose |
 |-------|------------|-----------|-----|-----------|-----------|---------|
@@ -514,49 +779,84 @@ graph TB
 | `credit-failed-topic` | 3 | 7 days | txnRef | Account Service | Transaction Service, Notification Service | Credit failed |
 | `reversal-topic` | 3 | 7 days | txnRef | Transaction Service | Account Service (ReversalConsumer) | Trigger reversal |
 | `reversal-success-topic` | 3 | 7 days | txnRef | Account Service | Transaction Service, Notification Service | Reversal completed |
-| `account-events-topic` | 3 | 7 days | accountNumber | Account Service | Ledger Service (Planned) | Account lifecycle events |
-| `kyc-topic` | 3 | 7 days | authUserId | User Service | Notification Service | KYC status changes |
+| `account-events-topic` | 3 | 7 days | accountNumber | Account Service | Ledger Service (Planned), KYC Workflow | Account lifecycle events |
+| `kyc-topic` | 3 | 7 days | authUserId | User Service | Notification Service | KYC status changes (legacy) |
+| `kyc-submission-topic` | 3 | 7 days | authUserId | User Service | KYC Workflow Service | New KYC submission |
+| `kyc-document-topic` | 3 | 7 days | authUserId | User Service | KYC Workflow Service | Document uploaded |
+| `kyc-case-topic` | 3 | 7 days | caseId | KYC Workflow Service | Account Service, Notification Service, Compliance Service | KYC case lifecycle |
+| `kyc-notification-topic` | 3 | 7 days | caseId | KYC Workflow Service | Notification Service | KYC workflow notifications |
 | `otp-verification-topic` | 3 | 24 hours | email | Auth Service | Notification Service | Email OTP delivery |
+| `user-created-topic` | 3 | 7 days | authUserId | Auth Service | KYC Workflow Service, User Service | New user registration |
 | `*.dlq` | 3 | 30 days | eventId | All (via DLQ config) | Dead Letter Processor | Failed message handling |
 
-### 7.2 Event Payloads (Key Events)
+### 7.2 Event Payloads (Key Events) - Updated
+
+```json
+// KycCaseEvent
+{
+  "eventId": "uuid",
+  "caseId": "KYC-20261118-001",
+  "caseNumber": "KYC-20261118-001",
+  "authUserId": 12345,
+  "eventType": "KYC_CASE_REVIEWED",
+  "previousStatus": "UNDER_REVIEW",
+  "newStatus": "RECOMMENDED_APPROVAL",
+  "actorId": 67890,
+  "actorRole": "KYC_OFFICER",
+  "recommendation": "APPROVE",
+  "findings": [
+    {"documentType": "PAN_CARD", "status": "VERIFIED", "remarks": "Valid PAN"},
+    {"documentType": "AADHAAR", "status": "VERIFIED", "remarks": "OCR matched"}
+  ],
+  "requestedInfo": null,
+  "timestamp": "2026-11-18T10:30:00Z"
+}
+```
+
+```json
+// KycNotificationEvent
+{
+  "eventId": "uuid",
+  "caseId": "KYC-20261118-001",
+  "recipientUserId": 12345,
+  "recipientRole": "CUSTOMER",
+  "notificationType": "CASE_STATUS_CHANGE",
+  "title": "KYC Application Update",
+  "message": "Your KYC application has been approved.",
+  "actionRequired": false,
+  "actionUrl": "/kyc/status/KYC-20261118-001",
+  "timestamp": "2026-11-18T10:30:00Z"
+}
+```
 
 ```json
 // TransferRequestedEvent
 {
   "eventId": "uuid",
-  "txnRef": "TXN-20261117-001",
+  "txnRef": "TXN-20261118-001",
   "fromAccount": "CITI123456789012",
   "toAccount": "CITI987654321098",
   "amount": 5000.00,
   "authUserId": 12345,
   "idempotencyKey": "client-provided-key",
-  "timestamp": "2026-11-17T10:30:00Z"
-}
-
-// DebitSuccessEvent
-{
-  "eventId": "uuid",
-  "txnRef": "TXN-20261117-001",
-  "fromAccount": "CITI123456789012",
-  "amount": 5000.00,
-  "balanceAfter": 15000.00,
-  "timestamp": "2026-11-17T10:30:01Z"
-}
-
-// KycEvent
-{
-  "eventId": "uuid",
-  "authUserId": 12345,
-  "eventType": "KYC_APPROVED",
-  "previousStatus": "UNDER_REVIEW",
-  "newStatus": "APPROVED",
-  "reviewedBy": "admin@citicore.com",
-  "timestamp": "2026-11-17T10:30:00Z"
+  "timestamp": "2026-11-18T10:30:00Z"
 }
 ```
 
-### 7.3 Transactional Outbox Pattern
+```json
+// DebitSuccessEvent
+{
+  "eventId": "uuid",
+  "txnRef": "TXN-20261118-001",
+  "fromAccount": "CITI123456789012",
+  "amount": 5000.00,
+  "balanceAfter": 15000.00,
+  "availableBalanceAfter": 15000.00,
+  "timestamp": "2026-11-18T10:30:01Z"
+}
+```
+
+### 7.3 Transactional Outbox Pattern (Same as before)
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
@@ -568,7 +868,7 @@ sequenceDiagram
     participant Consumer as Kafka Consumer
 
     App->>DB: BEGIN TRANSACTION
-    App->>DB: INSERT Business Entity (Account, Transaction)
+    App->>DB: INSERT Business Entity (Account, Transaction, KycCase)
     App->>DB: INSERT OutboxEvent (topic, payload, PENDING)
     App->>DB: COMMIT TRANSACTION
     
@@ -586,7 +886,7 @@ sequenceDiagram
     Consumer->>Kafka: commitOffset()
 ```
 
-### 7.4 Outbox Configuration
+### 7.4 Outbox Configuration (Same as before)
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
@@ -600,115 +900,139 @@ sequenceDiagram
 
 ## 8. Financial Transaction Processing
 
-### 8.1 Fund Transfer Saga (Choreography-Based)
+### 8.1 Hybrid Saga Architecture
+
+The platform uses a **hybrid saga architecture** based on the functional domain:
+
+| Domain | Pattern | Owner | Rationale |
+|--------|---------|-------|-----------|
+| **Fund Transfers** | Orchestration | Transaction Service | Financial consistency; centralized state management; compensation coordination |
+| **Notifications** | Choreography | Notification Service | Independent; fire-and-forget; no compensation needed |
+| **Audit Events** | Async Event Consumption | Compliance Service | Independent; idempotent; no saga participation |
+
+### 8.2 Fund Transfer Saga (Orchestration-Based)
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
 stateDiagram-v2
     [*] --> INITIATED: Client POST /transfer
     INITIATED --> DEBIT_REQUESTED: Save Transaction + Outbox
-    DEBIT_REQUESTED --> DEBIT_PROCESSING: Kafka: transfer-requested-topic
+    DEBIT_REQUESTED --> DEBIT_PROCESSING: Transaction Service orchestrates debit
     DEBIT_PROCESSING --> DEBIT_SUCCESS: Account Service debits sender
     DEBIT_PROCESSING --> DEBIT_FAILED: Insufficient balance / Account invalid
     
-    DEBIT_SUCCESS --> CREDIT_REQUESTED: Kafka: debit-success-topic
+    DEBIT_SUCCESS --> CREDIT_REQUESTED: Transaction Service orchestrates credit
     CREDIT_REQUESTED --> CREDIT_PROCESSING: Account Service credits receiver
     CREDIT_PROCESSING --> CREDIT_SUCCESS: Credit completed
     CREDIT_PROCESSING --> CREDIT_FAILED: Receiver account invalid / Closed
     
-    CREDIT_SUCCESS --> COMPLETED: Kafka: credit-success-topic → Transaction Service
-    COMPLETED --> [*]: Mark CREDIT_SUCCESS, Notify
+    CREDIT_SUCCESS --> COMPLETED: Mark CREDIT_SUCCESS, Notify
+    COMPLETED --> [*]: Saga Complete
     
-    CREDIT_FAILED --> REVERSAL_TRIGGERED: Kafka: credit-failed-topic → Transaction Service
-    REVERSAL_TRIGGERED --> REVERSAL_REQUESTED: Transaction Service publishes reversal-topic
-    REVERSAL_REQUESTED --> REVERSAL_PROCESSING: Account Service credits sender
+    CREDIT_FAILED --> REVERSAL_TRIGGERED: Transaction Service initiates reversal
+    REVERSAL_TRIGGERED --> REVERSAL_PROCESSING: Account Service credits sender
     REVERSAL_PROCESSING --> REVERSAL_SUCCESS: Reversal completed
-    REVERSAL_SUCCESS --> REVERSED: Kafka: reversal-success-topic → Transaction Service
-    REVERSED --> [*]: Mark REVERSED, Notify
+    REVERSAL_SUCCESS --> REVERSED: Mark REVERSED, Notify
+    REVERSED --> [*]: Saga Complete (Compensated)
     
-    DEBIT_FAILED --> FAILED: Kafka: debit-failed-topic → Transaction Service
-    FAILED --> [*]: Mark FAILED, Notify
+    DEBIT_FAILED --> FAILED: Mark FAILED, Notify
+    FAILED --> [*]: Saga Complete (Failed)
 ```
 
-### 8.2 Detailed Sequence Diagram
+### 8.3 Transaction Service as Saga Orchestrator
+
+The Transaction Service acts as the **orchestration owner** for fund transfers:
+
+| Responsibility | Implementation |
+|----------------|----------------|
+| **State Machine** | Persistent saga state (INITIATED, DEBIT_REQUESTED, DEBIT_SUCCESS, CREDIT_REQUESTED, CREDIT_SUCCESS, CREDIT_FAILED, REVERSAL_TRIGGERED, REVERSAL_SUCCESS, COMPLETED, FAILED, REVERSED) |
+| **Outbox Publishing** | Transactional outbox for reliable command/events |
+| **Compensation Coordination** | Explicit reversal-topic publication on credit failure |
+| **Retry Policies** | Exponential backoff (3 retries) for each step; DLQ after exhaustion |
+| **Idempotency** | Client-provided Idempotency-Key; server-side deduplication per user |
+| **Failure Handling** | Timeout monitoring; manual intervention queue for stuck sagas |
+| **Observability** | Saga correlation IDs propagated via Kafka headers and MDC |
+
+### 8.4 Detailed Sequence Diagram
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
 sequenceDiagram
-    autonumber
-    actor Client
+    participant Client
     participant GW as API Gateway
     participant TXN as Transaction Service
     participant KAFKA as Kafka
     participant ACC as Account Service
     participant NOTIF as Notification Service
-    participant DB_TXN as TXN DB
-    participant DB_ACC as ACC DB
-
+    
     Client->>GW: POST /api/v1/transactions/transfer\n{from, to, amount, idempotencyKey}
     GW->>TXN: Forward (JWT validated)
-    TXN->>TXN: Validate request, daily limit check
+    TXN->>TXN: Validate request, daily limit
     TXN->>ACC: Feign: validateTransfer(fromAcc, amount)
     ACC-->>TXN: Valid/Invalid
-    TXN->>DB_TXN: INSERT Transaction (INITIATED) + OutboxEvent\n(transfer-requested-topic) [ATOMIC]
+    TXN->>TXN: Save Transaction (INITIATED) + OutboxEvent\n(transfer-requested-topic) [ATOMIC]
     TXN-->>GW: 202 Accepted {txnRef}
     GW-->>Client: 202 Accepted
-
+    
     TXN->>KAFKA: OutboxPublisher → transfer-requested-topic
     
-    par Debit Phase
+    par Debit Phase (Orchestrated)
         KAFKA->>ACC: Consume transfer-requested-topic
-        ACC->>DB_ACC: SELECT ... FOR UPDATE (sender account)
-        ACC->>DB_ACC: UPDATE balance = balance - amount
-        ACC->>DB_ACC: INSERT AccountStatement (DEBIT)
-        ACC->>DB_ACC: INSERT OutboxEvent (debit-success-topic) [ATOMIC]
+        ACC->>ACC: SELECT ... FOR UPDATE (sender account)
+        ACC->>ACC: UPDATE balance = balance - amount
+        ACC->>ACC: INSERT AccountStatement (DEBIT)
+        ACC->>ACC: INSERT OutboxEvent (debit-success-topic) [ATOMIC]
         ACC->>KAFKA: OutboxPublisher → debit-success-topic
     end
-
-    par Credit Phase
-        KAFKA->>ACC: Consume debit-success-topic
-        ACC->>DB_ACC: SELECT ... FOR UPDATE (receiver account)
-        ACC->>DB_ACC: UPDATE balance = balance + amount
-        ACC->>DB_ACC: INSERT AccountStatement (CREDIT)
-        ACC->>DB_ACC: INSERT OutboxEvent (credit-success-topic) [ATOMIC]
+    
+    par Credit Phase (Orchestrated)
+        KAFKA->>TXN: Consume debit-success-topic
+        TXN->>TXN: Update saga state: DEBIT_SUCCESS
+        TXN->>ACC: Feign: credit(toAccount, amount, txnRef)
+        ACC->>ACC: SELECT ... FOR UPDATE (receiver account)
+        ACC->>ACC: UPDATE balance = balance + amount
+        ACC->>ACC: INSERT AccountStatement (CREDIT)
+        ACC->>ACC: INSERT OutboxEvent (credit-success-topic) [ATOMIC]
         ACC->>KAFKA: OutboxPublisher → credit-success-topic
     end
-
+    
     par Completion
         KAFKA->>TXN: Consume credit-success-topic
-        TXN->>DB_TXN: UPDATE Transaction SET status=CREDIT_SUCCESS
-        TXN->>KAFKA: (No outbox - terminal state)
+        TXN->>TXN: Update Transaction: CREDIT_SUCCESS
+        TXN->>TXN: Saga state: COMPLETED
         
         KAFKA->>NOTIF: Consume credit-success-topic
         NOTIF->>NOTIF: Send email to sender & receiver
     end
-
+    
     alt Credit Failure Path
         KAFKA->>ACC: Consume debit-success-topic → Credit FAILS
-        ACC->>DB_ACC: INSERT OutboxEvent (credit-failed-topic) [ATOMIC]
+        ACC->>ACC: INSERT OutboxEvent (credit-failed-topic) [ATOMIC]
         ACC->>KAFKA: OutboxPublisher → credit-failed-topic
         
         KAFKA->>TXN: Consume credit-failed-topic
-        TXN->>DB_TXN: UPDATE Transaction SET status=FAILED
-        TXN->>DB_TXN: INSERT OutboxEvent (reversal-topic) [ATOMIC]
+        TXN->>TXN: Update Transaction: FAILED
+        TXN->>TXN: Saga state: REVERSAL_TRIGGERED
+        TXN->>TXN: INSERT OutboxEvent (reversal-topic) [ATOMIC]
         TXN->>KAFKA: OutboxPublisher → reversal-topic
         
         KAFKA->>ACC: Consume reversal-topic
-        ACC->>DB_ACC: SELECT ... FOR UPDATE (sender account)
-        ACC->>DB_ACC: UPDATE balance = balance + amount (refund)
-        ACC->>DB_ACC: INSERT AccountStatement (CREDIT - REVERSAL)
-        ACC->>DB_ACC: INSERT OutboxEvent (reversal-success-topic) [ATOMIC]
+        ACC->>ACC: SELECT ... FOR UPDATE (sender account)
+        ACC->>ACC: UPDATE balance = balance + amount (refund)
+        ACC->>ACC: INSERT AccountStatement (CREDIT - REVERSAL)
+        ACC->>ACC: INSERT OutboxEvent (reversal-success-topic) [ATOMIC]
         ACC->>KAFKA: OutboxPublisher → reversal-success-topic
         
         KAFKA->>TXN: Consume reversal-success-topic
-        TXN->>DB_TXN: UPDATE Transaction SET status=REVERSED
+        TXN->>TXN: Update Transaction: REVERSED
+        TXN->>TXN: Saga state: REVERSED
         
         KAFKA->>NOTIF: Consume credit-failed-topic & reversal-success-topic
         NOTIF->>NOTIF: Send failure + refund emails
     end
 ```
 
-### 8.3 Idempotency Strategy
+### 8.5 Idempotency Strategy (Updated with user-scoping)
 
 | Level | Mechanism | Scope |
 |-------|-----------|-------|
@@ -717,165 +1041,17 @@ sequenceDiagram
 | **Account Service** | txnRef suffix deduplication in AccountStatement | Prevents duplicate posting |
 | **Kafka Consumers** | Status checks before processing | Prevents duplicate consumption |
 | **Consumer Groups** | Stable group IDs + exactly-once semantics | At-least-once delivery |
+| **KYC Workflow** | Case number uniqueness, Idempotent state transitions | Prevents duplicate case creation |
 
 ---
 
-## 9. Double-Entry Ledger Architecture
-
-### 9.1 Current State vs Target State
-
-| Aspect | Current (Account Statement) | Target (General Ledger) |
-|--------|----------------------------|-------------------------|
-| **Model** | Single-entry per account | Double-entry (balanced journals) |
-| **Balance** | Single `balance` column | `ledgerBalance` + `availableBalance` |
-| **Posting** | Direct balance update | Journal entries with debit/credit lines |
-| **Verification** | None | Trial balance, GL reconciliation |
-| **Audit** | AccountStatement only | Immutable journal + audit trail |
-| **Control Accounts** | None | Customer deposits, Cash, Income, Expense |
-
-### 9.2 Chart of Accounts (Sample)
-
-```mermaid
-%%{init: {'theme': 'base'}}%%
-graph TB
-    subgraph ASSET ["ASSET (1xxx)"]
-        A1[1000 - Cash & Cash Equivalents]
-        A2[1100 - Central Bank Deposits]
-        A3[1200 - Loans & Advances]
-        A4[1300 - Investments]
-        A5[1400 - Fixed Assets]
-    end
-    
-    subgraph LIABILITY ["LIABILITY (2xxx)"]
-        L1[2000 - Customer Deposits (Control)]
-        L2[2100 - Interbank Borrowings]
-        L3[2200 - Other Liabilities]
-    end
-    
-    subgraph EQUITY ["EQUITY (3xxx)"]
-        E1[3000 - Share Capital]
-        E2[3100 - Reserves & Surplus]
-        E3[3200 - Retained Earnings]
-    end
-    
-    subgraph INCOME ["INCOME (4xxx)"]
-        I1[4000 - Interest Income]
-        I2[4100 - Fee & Commission Income]
-        I3[4200 - Other Income]
-    end
-    
-    subgraph EXPENSE ["EXPENSE (5xxx)"]
-        X1[5000 - Interest Expense]
-        X2[5100 - Operating Expenses]
-        X3[5200 - Provisions]
-    end
-    
-    subgraph CUSTOMER ["Customer Sub-Ledger (2000-xxxx)"]
-        C1[2000-123456789012 - John Doe]
-        C2[2000-987654321098 - Jane Smith]
-    end
-
-    L1 --> C1
-    L1 --> C2
-```
-
-### 9.3 Posting Rules
-
-| Business Event | Debit Account | Credit Account | Description |
-|----------------|---------------|----------------|-------------|
-| Customer Deposit (Cash) | 1000 - Cash | 2000-{account} - Customer Deposits | Cash received |
-| Customer Withdrawal (Cash) | 2000-{account} - Customer Deposits | 1000 - Cash | Cash paid out |
-| Internal Transfer (A→B) | 2000-{A} - Customer Deposits | 2000-{B} - Customer Deposits | Liability transfer |
-| Loan Disbursement | 1200 - Loans Receivable | 2000-{account} - Customer Deposits | Asset created, liability increased |
-| Interest Accrual | 2000-{account} - Customer Deposits | 4000 - Interest Income | Expense to bank, income recognized |
-| Fee Collection | 2000-{account} - Customer Deposits | 4100 - Fee Income | Liability reduced, income recognized |
-
-### 9.4 Journal Entry Structure
-
-```mermaid
-%%{init: {'theme': 'base'}}%%
-erDiagram
-    JOURNAL_ENTRY ||--o{ JOURNAL_LINE : contains
-    JOURNAL_ENTRY {
-        BIGINT id PK
-        VARCHAR txnRef UK
-        DATETIME entryDate
-        VARCHAR description
-        ENUM status "POSTED, REVERSED"
-        DATETIME createdAt
-    }
-    JOURNAL_LINE {
-        BIGINT id PK
-        BIGINT journalId FK
-        VARCHAR accountCode FK
-        DECIMAL debit ">= 0"
-        DECIMAL credit ">= 0"
-        CHECK "(debit>0 AND credit=0) OR (debit=0 AND credit>0)"
-    }
-    LEDGER_ACCOUNT ||--o{ JOURNAL_LINE : referenced_by
-    LEDGER_ACCOUNT {
-        VARCHAR code PK "1000, 2000-12345..."
-        VARCHAR name
-        ENUM type "ASSET, LIABILITY, EQUITY, INCOME, EXPENSE"
-        CHAR currency "INR"
-        BOOLEAN isControlAccount
-        VARCHAR parentCode FK
-    }
-    LEDGER_BALANCE {
-        BIGINT id PK
-        VARCHAR accountCode FK
-        DATE asOfDate
-        DECIMAL openingBalance
-        DECIMAL totalDebits
-        DECIMAL totalCredits
-        DECIMAL closingBalance "opening + debits - credits"
-    }
-```
-
-### 9.5 Invariants (Database Constraints)
-
-```sql
--- Journal entry must balance (enforced by trigger)
-CREATE TRIGGER trg_journal_balance
-BEFORE INSERT ON journal_entries
-FOR EACH ROW
-BEGIN
-    DECLARE v_debit DECIMAL(19,4);
-    DECLARE v_credit DECIMAL(19,4);
-    SELECT COALESCE(SUM(debit),0), COALESCE(SUM(credit),0) 
-    INTO v_debit, v_credit
-    FROM journal_lines WHERE journal_id = NEW.id;
-    IF v_debit != v_credit THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Journal entry must balance';
-    END IF;
-END;
-
--- Journal line: exactly one side
-ALTER TABLE journal_lines ADD CONSTRAINT chk_one_side 
-CHECK ((debit > 0 AND credit = 0) OR (debit = 0 AND credit > 0));
-
--- No negative amounts
-ALTER TABLE journal_lines ADD CONSTRAINT chk_positive 
-CHECK (debit >= 0 AND credit >= 0);
-
--- Account balance consistency (reconciliation view)
-CREATE VIEW v_balance_reconciliation AS
-SELECT 
-    a.account_number,
-    a.balance as account_balance,
-    COALESCE(SUM(CASE WHEN s.transaction_type='CREDIT' THEN s.amount ELSE -s.amount END),0) as statement_balance,
-    COALESCE(SUM(CASE WHEN jl.account_code=CONCAT('2000-',a.account_number) THEN jl.debit - jl.credit END),0) as ledger_balance
-FROM accounts a
-LEFT JOIN account_statements s ON a.account_number = s.account_number
-LEFT JOIN journal_lines jl ON jl.account_code = CONCAT('2000-', a.account_number)
-GROUP BY a.account_number, a.balance;
-```
+## 9. Double-Entry Ledger Architecture (Same as before - already comprehensive)
 
 ---
 
-## 10. Security Architecture
+## 10. Security Architecture (Updated - Comprehensive RBAC)
 
-### 10.1 Authentication Flow
+### 10.1 Authentication Flow (Updated with MFA)
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
@@ -893,11 +1069,29 @@ sequenceDiagram
     DB-->>AUTH: User (BCrypt hash)
     AUTH->>AUTH: Verify password (BCrypt)
     alt Valid Credentials
-        AUTH->>DB: INSERT RefreshToken (new, revoke old)
-        AUTH-->>GW: 200 OK {accessToken, refreshToken}
-        GW-->>Client: 200 OK {accessToken, refreshToken}
+        AUTH->>DB: Check MFA enabled?
+        alt MFA Enabled
+            AUTH->>DB: INSERT LoginAttempt (pending MFA)
+            AUTH-->>GW: 200 OK {mfaRequired: true, mfaMethods: ["TOTP", "EMAIL"]}
+            GW-->>Client: 200 OK {mfaRequired: true}
+            Client->>User: Prompt for MFA code
+            User->>Client: Enter TOTP/Email OTP
+            Client->>GW: POST /api/v1/auth/mfa/verify {code, method}
+            GW->>AUTH: Forward MFA verification
+            AUTH->>AUTH: Verify TOTP/OTP
+            AUTH->>DB: INSERT RefreshToken (new, revoke old)
+            AUTH->>DB: UPDATE LoginAttempt (success)
+            AUTH-->>GW: 200 OK {accessToken, refreshToken}
+            GW-->>Client: 200 OK {accessToken, refreshToken}
+        else MFA Not Enabled
+            AUTH->>DB: INSERT RefreshToken (new, revoke old)
+            AUTH-->>GW: 200 OK {accessToken, refreshToken}
+            GW-->>Client: 200 OK {accessToken, refreshToken}
+        end
         Client->>Client: Store tokens securely
     else Invalid Credentials
+        AUTH->>DB: INSERT LoginAttempt (failed)
+        AUTH->>AUTH: Check lockout threshold (5/15min)
         AUTH-->>GW: 401 Unauthorized
         GW-->>Client: 401 Unauthorized
     end
@@ -905,84 +1099,55 @@ sequenceDiagram
     Note over Client,GW: Subsequent Requests
     Client->>GW: GET /api/v1/accounts/balance/ACC123\nAuthorization: Bearer <accessToken>
     GW->>GW: Validate JWT (signature, expiry, claims)
-    GW->>GW: Extract userId, roles, email
-    GW->>GW: Add headers: X-User-Id, X-User-Roles, X-User-Email
+    GW->>GW: Extract userId, roles, email, permissions
+    GW->>GW: RBAC Check: role/permission for endpoint
+    GW->>GW: Add headers: X-User-Id, X-User-Roles, X-User-Email, X-User-Permissions
     GW->>Target Service: Forward with headers
     Target Service->>Target Service: JwtAuthenticationFilter validates\nSets SecurityContext
+    Target Service->>Target Service: @PreAuthorize method-level check
+    Target Service->>Target Service: Service logic ownership/authorization check
 ```
 
-### 10.2 Token Specification
+### 10.2 Token Specification (Same as before)
 
-| Token | Algorithm | Expiry | Claims | Storage |
-|-------|-----------|--------|--------|---------|
-| **Access Token** | HS256 | 15 minutes | userId, email, roles, iat, exp | Client memory (not localStorage) |
-| **Refresh Token** | Opaque (UUID) | 7 days | userId, token, expiryDate, revoked | Database (citicore_authdb.refresh_tokens) |
+### 10.3 Refresh Token Rotation (Same as before)
 
-### 10.3 Refresh Token Rotation
-
-```mermaid
-%%{init: {'theme': 'base'}}%%
-stateDiagram-v2
-    [*] --> LOGIN: POST /login
-    LOGIN --> ISSUE_TOKENS: Generate access + refresh
-    ISSUE_TOKENS --> ACTIVE: Store refresh in DB
-    
-    ACTIVE --> REFRESH_REQUEST: POST /refresh {refreshToken}
-    REFRESH_REQUEST --> VALIDATE: Check DB: exists, not revoked, not expired
-    VALIDATE --> ROTATE: Revoke old, generate new pair
-    ROTATE --> ISSUE_TOKENS: New access + new refresh
-    
-    ACTIVE --> LOGOUT: POST /logout {refreshToken}
-    LOGOUT --> REVOKED: Mark refresh token revoked
-    
-    ACTIVE --> PASSWORD_CHANGE: POST /change-password
-    PASSWORD_CHANGE --> REVOKE_ALL: Revoke all user's refresh tokens
-    REVOKE_ALL --> ACTIVE: Force re-login
-    
-    ACTIVE --> EXPIRY: Time passes
-    EXPIRY --> EXPIRED: Refresh token expired
-    EXPIRED --> LOGIN: Require full login
-```
-
-### 10.4 Authorization Model
+### 10.4 Authorization Model (Updated - Comprehensive RBAC + ABAC)
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
 graph TB
     subgraph RBAC ["Role-Based Access Control"]
-        ROLES[Roles: CUSTOMER, ADMIN, SUPPORT, AUDITOR, SERVICE]
-        PERMISSIONS[Permissions: READ, WRITE, ADMIN, AUDIT]
+        ROLES[Roles: CUSTOMER, KYC_OFFICER, KYC_MANAGER, SUPPORT_AGENT, OPERATIONS_OFFICER, COMPLIANCE_OFFICER, ADMIN, AUDITOR, SERVICE]
+        PERMISSIONS[Permissions: 25 granular permissions\n(See Section 3.3)]
+        ROLE_PERM[Role-Permission Mapping\n(See Section 3.4 Matrix)]
     end
     
-    subgraph ABAC ["Attribute-Based (Planned)"]
-        ATTRS[Attributes: userId, accountOwnership, kycStatus, riskScore]
-        POLICIES[Policies: Ownership, KYC Required, Daily Limits]
+    subgraph ABAC ["Attribute-Based Access Control"]
+        ATTRS[Attributes: userId, accountOwnership, kycCaseAssignment, kycCaseAuthorization, kycStatus, riskScore, caseScope]
+        POLICIES[Policies: Ownership, KYC Case Assignment, KYC Case Authorization, Separation of Duties, KYC Required, Daily Limits]
     end
     
     subgraph ENFORCEMENT ["Enforcement Points"]
-        GATEWAY[API Gateway: JWT validation, Rate limiting]
-        FILTER[JwtAuthenticationFilter: Token validation, SecurityContext]
-        ANNOTATION[@PreAuthorize: Method-level security]
-        SERVICE[Service Logic: Ownership checks, Business rules]
+        GATEWAY[API Gateway: JWT validation, RBAC coarse check, Rate limiting]
+        FILTER[JwtAuthenticationFilter: Token validation, SecurityContext, Permission extraction]
+        ANNOTATION[@PreAuthorize: Method-level RBAC + SpEL]
+        SERVICE[Service Logic: ABAC ownership checks, Business rules, Separation of duties]
+        KYC_ENFORCE[KYC Workflow Engine: State machine, Maker-Checker enforcement, Case assignment]
     end
     
     ROLES --> PERMISSIONS
+    PERMISSIONS --> ROLE_PERM
     ATTRS --> POLICIES
     GATEWAY --> FILTER
     FILTER --> ANNOTATION
     ANNOTATION --> SERVICE
+    SERVICE --> KYC_ENFORCE
 ```
 
-### 10.5 Service-to-Service Security
+### 10.5 Service-to-Service Security (Same as before)
 
-| Communication | Mechanism | Details |
-|---------------|-----------|---------|
-| **Gateway → Services** | JWT Propagation | Gateway validates, forwards claims via headers (X-User-Id, X-User-Roles, X-User-Email) |
-| **Feign Clients** | Request Interceptor | Adds `Authorization: Bearer <service-token>` or propagates user JWT |
-| **Service Validation** | Independent | Each service validates JWT using own JwtUtils (no shared secret) |
-| **Internal Service Calls** | Service Role | `ROLE_SERVICE` for Feign-only endpoints (e.g., `/accounts/validate-transfer`) |
-
-### 10.6 Security Controls Summary
+### 10.6 Security Controls Summary (Updated)
 
 | Control | Implementation | Status |
 |---------|----------------|--------|
@@ -993,20 +1158,458 @@ graph TB
 | **Account Lockout** | Failed attempt tracking (5/15min) | ⚠️ Planned (P1) |
 | **MFA/TOTP** | RFC 6238 + Backup codes | ⚠️ Planned (P1) |
 | **Password Reset** | Secure token (15min, single-use) | ⚠️ Planned (P0) |
-| **RBAC** | Spring @EnableMethodSecurity + @PreAuthorize | ⚠️ Partial (Planned) |
+| **RBAC** | Spring @EnableMethodSecurity + @PreAuthorize + PermissionEvaluator | ✅ Designed |
+| **ABAC** | Custom PermissionEvaluator + SpEL expressions | ✅ Designed |
+| **Separation of Duties** | KYC Workflow Engine state machine | ✅ Designed |
 | **Input Validation** | Bean Validation (@Positive, @Max, @Pattern) | ⚠️ Partial (Planned) |
 | **Error Handling** | Generic client messages, detailed server logs | ⚠️ Planned |
-| **Audit Logging** | Immutable audit trail (Planned Ledger) | ⚠️ Planned |
-| **Encryption at Rest** | MySQL TDE (Planned) | ❌ |
+| **Audit Logging** | Immutable audit trail (KYC Case History, Ledger) | ✅ Designed |
+| **Encryption at Rest** | MySQL TDE (Planned), Column-level for PII | ❌ |
 | **Encryption in Transit** | TLS 1.2+ (Planned) | ❌ |
 | **Secrets Management** | HashiCorp Vault (Planned) | ❌ |
 | **Container Security** | Non-root user, read-only FS, dropped caps | ⚠️ Planned |
+| **KYC Document Security** | S3 SSE-KMS, Pre-signed URLs, Malware scanning | ⚠️ Planned |
+
+### 10.7 JWT Claims Structure (Updated)
+
+```json
+{
+  "sub": "12345",
+  "email": "customer@example.com",
+  "roles": ["ROLE_CUSTOMER"],
+  "permissions": [
+    "CUSTOMER_PROFILE_READ",
+    "CUSTOMER_PROFILE_WRITE",
+    "KYC_DOCUMENT_UPLOAD",
+    "ACCOUNT_CREATE",
+    "ACCOUNT_READ",
+    "TRANSFER_INITIATE"
+  ],
+  "kycStatus": "APPROVED",
+  "riskScore": 15,
+  "iat": 1731923400,
+  "exp": 1731924300
+}
+```
+
+```json
+{
+  "sub": "67890",
+  "email": "kyc.officer@citicore.com",
+  "roles": ["ROLE_KYC_OFFICER"],
+  "permissions": [
+    "CUSTOMER_PROFILE_READ_ALL",
+    "KYC_DOCUMENT_READ",
+    "KYC_CASE_REVIEW",
+    "KYC_CASE_RECOMMEND",
+    "KYC_CASE_REQUEST_INFO",
+    "ACCOUNT_READ",
+    "ACCOUNT_STATEMENT"
+  ],
+  "assignedCases": ["KYC-20261118-001", "KYC-20261118-002"],
+  "iat": 1731923400,
+  "exp": 1731924300
+}
+```
+
+```json
+{
+  "sub": "54321",
+  "email": "kyc.manager@citicore.com",
+  "roles": ["ROLE_KYC_MANAGER"],
+  "permissions": [
+    "CUSTOMER_PROFILE_READ_ALL",
+    "KYC_DOCUMENT_READ",
+    "KYC_CASE_ASSIGN",
+    "KYC_CASE_APPROVE",
+    "KYC_CASE_REJECT",
+    "KYC_CASE_RETURN",
+    "KYC_CASE_ESCALATE",
+    "KYC_AUDIT_READ",
+    "ACCOUNT_READ",
+    "ACCOUNT_STATEMENT"
+  ],
+  "authorizedCases": ["KYC-20261118-001", "KYC-20261118-003"],
+  "iat": 1731923400,
+  "exp": 1731924300
+}
+```
+
+### 10.8 Role and Permission Revocation/Refresh Strategy
+
+| Scenario | Mechanism | Timing |
+|----------|-----------|--------|
+| **Role revocation by Admin** | Cache eviction (Redis) + JWT short expiry (15min) | Next token refresh (max 15min) |
+| **Permission change** | Cache eviction + JWT short expiry | Next token refresh (max 15min) |
+| **KYC Case reassignment** | Case assignment cache invalidation | Immediate (Redis pub/sub) |
+| **User suspension** | Refresh token revocation (DB) + Cache eviction | Immediate |
+| **Password change** | All refresh tokens revoked + Cache eviction | Immediate |
+| **MFA enable/disable** | Cache eviction + Next JWT refresh | Max 15min |
+| **Emergency lockout** | Refresh token revocation + Redis blocklist | Immediate |
 
 ---
 
-## 11. Infrastructure & Deployment
+## 11. KYC Architecture (Updated - Maker-Checker Workflow)
 
-### 11.1 Docker Compose (Local Development)
+### 11.1 KYC Business Roles & Responsibilities
+
+#### Customer Responsibilities
+- Register and submit KYC information
+- Upload identity and address documents (PAN, Aadhaar, Passport, Utility Bill, etc.)
+- View KYC application status
+- Respond to requests for additional documents/information
+- View the final decision and permitted rejection reasons
+
+#### KYC Officer Responsibilities (Maker)
+- Access authorized or assigned KYC applications
+- Review customer information and uploaded documents
+- Perform the configured verification checks (document authenticity, OCR match, face match)
+- Record findings and remarks per document/check
+- Request additional information or documents from customer
+- Recommend approval or rejection with justification
+- Submit the case to the KYC Manager for a final decision
+- **Constraint:** The KYC Officer MUST NOT perform final approval of their own reviewed case
+
+#### KYC Manager Responsibilities (Checker)
+- View authorized KYC cases (not own reviews)
+- Review the KYC Officer's findings and recommendation
+- Approve or reject the application with reason
+- Return incomplete cases for further review
+- Record the final decision and reason
+- Escalate exceptional cases where appropriate
+- Assign cases to officers based on workload/expertise
+
+#### KYC Vendor Integration (Mock Provider)
+- **Interface:** `KycVerificationProvider` with `verify(identityDocuments)` method
+- **Initial Implementation:** Mock provider returning deterministic responses for testing
+- **Future:** Pluggable adapter for real vendors (Jumio, Onfido, etc.)
+- **Test Data:** Synthetic PAN/Aadhaar patterns only; no real identity data
+- **Configuration:** Provider selection via Spring profiles (`mock`, `jumio`, `onfido`)
+
+### 11.2 KYC Workflow and Status Model (Complete Lifecycle)
+
+```mermaid
+%%{init: {'theme': 'base'}}%%
+stateDiagram-v2
+    [*] --> DRAFT: Customer starts KYC
+    DRAFT --> SUBMITTED: Customer submits application + docs
+    SUBMITTED --> PENDING_REVIEW: Auto-assignment or Manager assigns
+    PENDING_REVIEW --> UNDER_REVIEW: KYC Officer starts review
+    UNDER_REVIEW --> MORE_INFO_REQUIRED: Officer requests additional info
+    MORE_INFO_REQUIRED --> RESUBMITTED: Customer provides info
+    RESUBMITTED --> UNDER_REVIEW: Officer re-reviews
+    UNDER_REVIEW --> RECOMMENDED_APPROVAL: Officer recommends approve
+    UNDER_REVIEW --> RECOMMENDED_REJECTION: Officer recommends reject
+    RECOMMENDED_APPROVAL --> PENDING_MANAGER_APPROVAL: Auto-forward to Manager
+    RECOMMENDED_REJECTION --> PENDING_MANAGER_APPROVAL: Auto-forward to Manager
+    PENDING_MANAGER_APPROVAL --> APPROVED: Manager approves
+    PENDING_MANAGER_APPROVAL --> REJECTED: Manager rejects
+    PENDING_MANAGER_APPROVAL --> UNDER_REVIEW: Manager returns for further review
+    PENDING_MANAGER_APPROVAL --> ESCALATED: Manager escalates
+    ESCALATED --> UNDER_REVIEW: Compliance resolves escalation
+    APPROVED --> [*]: KYC Complete
+    REJECTED --> [*]: KYC Complete (Customer can reapply)
+```
+
+### 11.3 KYC State Transitions & Authorized Roles
+
+| From State | To State | Trigger | Authorized Role | Conditions |
+|------------|----------|---------|-----------------|------------|
+| `DRAFT` | `SUBMITTED` | Customer submits application | CUSTOMER | All required docs uploaded |
+| `SUBMITTED` | `PENDING_REVIEW` | Case created + auto-assignment | SYSTEM | Case created, officer assigned |
+| `PENDING_REVIEW` | `UNDER_REVIEW` | Officer starts review | KYC_OFFICER (assigned) | Officer claims case |
+| `UNDER_REVIEW` | `MORE_INFO_REQUIRED` | Officer requests info | KYC_OFFICER (assigned) | Specific documents/info requested |
+| `MORE_INFO_REQUIRED` | `RESUBMITTED` | Customer provides info | CUSTOMER | All requested items provided |
+| `RESUBMITTED` | `UNDER_REVIEW` | Officer re-reviews | KYC_OFFICER (assigned) | Auto on resubmission |
+| `UNDER_REVIEW` | `RECOMMENDED_APPROVAL` | Officer recommends approve | KYC_OFFICER (assigned) | All checks passed, findings recorded |
+| `UNDER_REVIEW` | `RECOMMENDED_REJECTION` | Officer recommends reject | KYC_OFFICER (assigned) | Deficiency found, findings recorded |
+| `RECOMMENDED_APPROVAL` | `PENDING_MANAGER_APPROVAL` | Auto-forward | SYSTEM | Recommendation submitted |
+| `RECOMMENDED_REJECTION` | `PENDING_MANAGER_APPROVAL` | Auto-forward | SYSTEM | Recommendation submitted |
+| `PENDING_MANAGER_APPROVAL` | `APPROVED` | Manager approves | KYC_MANAGER (authorized, NOT reviewer) | Reviews findings, records decision |
+| `PENDING_MANAGER_APPROVAL` | `REJECTED` | Manager rejects | KYC_MANAGER (authorized, NOT reviewer) | Records rejection reason |
+| `PENDING_MANAGER_APPROVAL` | `UNDER_REVIEW` | Manager returns for review | KYC_MANAGER (authorized) | Incomplete, needs more info |
+| `PENDING_MANAGER_APPROVAL` | `ESCALATED` | Manager escalates | KYC_MANAGER (authorized) | Exceptional case |
+| `ESCALATED` | `UNDER_REVIEW` | Compliance resolves | COMPLIANCE_OFFICER | Escalation resolved |
+
+### 11.4 Separation of Duties Enforcement
+
+```mermaid
+%%{init: {'theme': 'base'}}%%
+flowchart TD
+    A[KYC Case Recommended] --> B{Recommendation Type}
+    B -->|RECOMMENDED_APPROVAL| C[Forward to KYC_MANAGER]
+    B -->|RECOMMENDED_REJECTION| C
+    C --> D{Manager Identity Check}
+    D -->|Manager == Reviewing Officer| E[BLOCK: Self-Approval Prohibited]
+    D -->|Manager != Reviewing Officer| F[Allow Manager Decision]
+    E --> G[Alert: Separation of Duties Violation]
+    F --> H{Manager Action}
+    H -->|APPROVE| I[Status: APPROVED]
+    H -->|REJECT| J[Status: REJECTED]
+    H -->|RETURN| K[Status: UNDER_REVIEW]
+    H -->|ESCALATE| L[Status: ESCALATED]
+```
+
+**Enforcement Rules:**
+1. **Maker-Checker Separation:** The `KYC_OFFICER` who submits a recommendation (approve/reject) CANNOT be the same user who performs the final approval/rejection.
+2. **Case Assignment:** `KYC_MANAGER` assigns cases to officers. An officer can only access assigned cases.
+3. **Authorization Scope:** `KYC_MANAGER` can only approve/reject cases they are authorized for (not their own reviews).
+4. **Audit Trail:** Every transition records actor ID, role, timestamp, reason, and previous/new state.
+
+### 11.5 KYC Service Communication & Audit Flow
+
+```mermaid
+%%{init: {'theme': 'base'}}%%
+sequenceDiagram
+    participant Customer
+    participant GW as API Gateway
+    participant KYC as KYC Workflow Service
+    participant USER as User Service
+    participant AUTH as Auth Service
+    participant KAFKA as Kafka
+    participant NOTIF as Notification Service
+    participant COMPLIANCE as Compliance Service
+    participant ACC as Account Service
+    
+    Note over Customer,ACC: KYC Submission
+    Customer->>GW: POST /api/v1/users/kyc/submit
+    GW->>USER: Forward (authenticated)
+    USER->>USER: Create KYC submission, save docs to S3
+    USER->>KAFKA: Publish kyc-submission-topic
+    KAFKA->>KYC: Consume submission
+    KYC->>KYC: Create KycCase (SUBMITTED)
+    KYC->>KYC: Auto-assign to KYC_OFFICER (round-robin/workload)
+    KYC->>KAFKA: Publish kyc-case-topic (CREATED, ASSIGNED)
+    KAFKA->>NOTIF: Notify Customer + Officer
+    KAFKA->>COMPLIANCE: Log for monitoring
+    
+    Note over Customer,ACC: Officer Review
+    KYC_OFFICER->>GW: GET /api/v1/kyc/cases/assigned
+    GW->>KYC: Forward (RBAC: KYC_OFFICER + assigned cases)
+    KYC->>USER: Feign: Get customer profile + documents
+    USER-->>KYC: Profile + S3 document URLs
+    KYC_OFFICER->>GW: POST /api/v1/kyc/cases/{id}/review {findings}
+    GW->>KYC: Forward (RBAC: KYC_OFFICER + assigned + UNDER_REVIEW)
+    KYC->>KYC: Validate findings, record KycReviewFinding
+    KYC->>KYC: Update case status (UNDER_REVIEW)
+    KYC->>KAFKA: Publish kyc-case-topic (REVIEWED)
+    
+    Note over Customer,ACC: Recommendation
+    KYC_OFFICER->>GW: POST /api/v1/kyc/cases/{id}/recommend {APPROVE, remarks}
+    GW->>KYC: Forward (RBAC: KYC_OFFICER + assigned)
+    KYC->>KYC: Validate, create recommendation record
+    KYC->>KYC: Update status (RECOMMENDED_APPROVAL)
+    KYC->>KAFKA: Publish kyc-case-topic (RECOMMENDED)
+    KAFKA->>NOTIF: Notify Manager
+    KAFKA->>COMPLIANCE: Audit log
+    
+    Note over Customer,ACC: Manager Decision
+    KYC_MANAGER->>GW: GET /api/v1/kyc/cases/pending-approval
+    GW->>KYC: Forward (RBAC: KYC_MANAGER + authorized cases)
+    KYC->>KYC: Filter cases where manager != reviewing officer
+    KYC_MANAGER->>GW: POST /api/v1/kyc/cases/{id}/approve {reason}
+    GW->>KYC: Forward (RBAC: KYC_MANAGER + authorized + NOT reviewer)
+    KYC->>KYC: **ENFORCE: managerId != reviewingOfficerId**
+    KYC->>KYC: Update status (APPROVED)
+    KYC->>KAFKA: Publish kyc-case-topic (APPROVED)
+    KAFKA->>NOTIF: Notify Customer (approved)
+    KAFKA->>ACC: Enable account creation (KYC_APPROVED)
+    KAFKA->>COMPLIANCE: Audit trail
+    ACC->>ACC: Allow account creation for customer
+```
+
+### 11.6 KYC Data Model
+
+#### 11.6.1 KycCase Entity
+```java
+@Entity
+@Table(name = "kyc_cases")
+public class KycCase {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "case_number", unique = true, nullable = false)
+    private String caseNumber; // KYC-YYYYMMDD-XXXX
+    
+    @Column(name = "auth_user_id", nullable = false)
+    private Long authUserId; // Customer
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    private KycCaseStatus status; // See state model
+    
+    @Column(name = "assigned_officer_id")
+    private Long assignedOfficerId; // KYC_OFFICER
+    
+    @Column(name = "reviewing_officer_id")
+    private Long reviewingOfficerId; // Officer who reviewed
+    
+    @Column(name = "deciding_manager_id")
+    private Long decidingManagerId; // KYC_MANAGER who decided
+    
+    @Column(name = "recommendation")
+    @Enumerated(EnumType.STRING)
+    private KycRecommendation recommendation; // APPROVE, REJECT
+    
+    @Column(name = "rejection_reason")
+    private String rejectionReason;
+    
+    @Column(name = "escalation_reason")
+    private String escalationReason;
+    
+    @Column(name = "sla_deadline")
+    private LocalDateTime slaDeadline;
+    
+    @Column(name = "created_at", nullable = false)
+    private LocalDateTime createdAt;
+    
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+    
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+}
+```
+
+#### 11.6.2 KycCaseAssignment Entity
+```java
+@Entity
+@Table(name = "kyc_case_assignments")
+public class KycCaseAssignment {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "case_id", nullable = false)
+    private Long caseId;
+    
+    @Column(name = "assignee_id", nullable = false)
+    private Long assigneeId; // KYC_OFFICER
+    
+    @Column(name = "assigned_by_id", nullable = false)
+    private Long assignedById; // KYC_MANAGER or SYSTEM
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "assignment_type", nullable = false)
+    private AssignmentType type; // INITIAL, REASSIGN, ESCALATION
+    
+    @Column(name = "assigned_at", nullable = false)
+    private LocalDateTime assignedAt;
+    
+    @Column(name = "acknowledged_at")
+    private LocalDateTime acknowledgedAt;
+    
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+}
+```
+
+#### 11.6.3 KycCaseHistory Entity (Audit Trail)
+```java
+@Entity
+@Table(name = "kyc_case_history")
+public class KycCaseHistory {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "case_id", nullable = false)
+    private Long caseId;
+    
+    @Column(name = "actor_id", nullable = false)
+    private Long actorId; // User who performed action
+    
+    @Column(name = "actor_role", nullable = false)
+    private String actorRole; // CUSTOMER, KYC_OFFICER, KYC_MANAGER, etc.
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "action", nullable = false)
+    private KycCaseAction action; // SUBMITTED, ASSIGNED, REVIEWED, RECOMMENDED, APPROVED, REJECTED, RETURNED, ESCALATED, INFO_REQUESTED, RESUBMITTED
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "previous_status", nullable = false)
+    private KycCaseStatus previousStatus;
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "new_status", nullable = false)
+    private KycCaseStatus newStatus;
+    
+    @Column(name = "reason", columnDefinition = "TEXT")
+    private String reason;
+    
+    @Column(name = "metadata", columnDefinition = "JSON")
+    private String metadata; // Additional context (findings, requested docs, etc.)
+    
+    @Column(name = "timestamp", nullable = false)
+    private LocalDateTime timestamp;
+}
+```
+
+#### 11.6.4 KycReviewFinding Entity
+```java
+@Entity
+@Table(name = "kyc_review_findings")
+public class KycReviewFinding {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "case_id", nullable = false)
+    private Long caseId;
+    
+    @Column(name = "document_type", nullable = false)
+    private String documentType; // PAN_CARD, AADHAAR, PASSPORT, UTILITY_BILL, etc.
+    
+    @Column(name = "document_ref_id")
+    private Long documentRefId; // FK to kyc_document_refs
+    
+    @Enumerated(EnumType.STRING)
+    @Column(name = "verification_status", nullable = false)
+    private VerificationStatus status; // VERIFIED, FAILED, PENDING_MANUAL, NOT_PROVIDED
+    
+    @Column(name = "remarks", columnDefinition = "TEXT")
+    private String remarks;
+    
+    @Column(name = "checked_by_id", nullable = false)
+    private Long checkedById; // KYC_OFFICER
+    
+    @Column(name = "checked_at", nullable = false)
+    private LocalDateTime checkedAt;
+    
+    @Column(name = "ocr_confidence")
+    private BigDecimal ocrConfidence;
+    
+    @Column(name = "face_match_score")
+    private BigDecimal faceMatchScore;
+}
+```
+
+### 11.7 KYC Document Access Security
+
+| Document Access | Customer | KYC_OFFICER (Assigned) | KYC_MANAGER (Authorized) | SUPPORT/OPERATIONS | COMPLIANCE | ADMIN |
+|-----------------|----------|------------------------|--------------------------|-------------------|------------|-------|
+| **View own documents** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| **Download own documents** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| **Upload documents** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Delete documents** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **View assigned case docs** | ❌ | ✅ | ✅ | Limited* | ✅ | ✅ |
+| **Pre-signed URL expiry** | 15 min | 15 min | 15 min | N/A | 15 min | 15 min |
+
+> *SUPPORT_AGENT: Limited to verification status only, not document content.
+
+**Security Controls:**
+- All document access via pre-signed S3 URLs (15-minute expiry)
+- S3 bucket encryption: SSE-KMS
+- Document access logged in `KycCaseHistory` with actor, timestamp, action
+- Malware scanning on upload (S3 Object Lambda + ClamAV)
+- No direct S3 access; all through KYC Workflow Service
+
+---
+
+## 12. Infrastructure & Deployment
+
+### 12.1 Docker Compose (Local Development) - Updated
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
@@ -1019,6 +1622,7 @@ graph TB
         CONFIG[config-server\nPort 8888]
         AUTH[auth-service\nPort 8081]
         USER[user-service\nPort 8082]
+        KYC[kyc-workflow-service\nPort 8087]
         ACC[account-service\nPort 8083]
         TXN[transaction-service\nPort 8084]
         NOTIF[notification-service\nPort 8085]
@@ -1027,6 +1631,7 @@ graph TB
     
     GW --> AUTH
     GW --> USER
+    GW --> KYC
     GW --> ACC
     GW --> TXN
     GW --> NOTIF
@@ -1041,18 +1646,27 @@ graph TB
     USER --> EUREKA
     USER --> CONFIG
     
+    KYC --> MYSQL
+    KYC --> KAFKA
+    KYC --> EUREKA
+    KYC --> CONFIG
+    KYC --> USER
+    KYC --> AUTH
+    
     ACC --> MYSQL
     ACC --> REDIS
     ACC --> KAFKA
     ACC --> EUREKA
     ACC --> CONFIG
     ACC --> USER
+    ACC --> KYC
     
     TXN --> MYSQL
     TXN --> KAFKA
     TXN --> EUREKA
     TXN --> CONFIG
     TXN --> ACC
+    TXN --> KYC
     
     NOTIF --> KAFKA
     NOTIF --> EUREKA
@@ -1062,7 +1676,7 @@ graph TB
     CONFIG --> KAFKA
 ```
 
-### 11.2 Kubernetes Deployment Architecture (Target)
+### 12.2 Kubernetes Deployment Architecture (Target) - Updated
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
@@ -1086,10 +1700,12 @@ graph TB
         subgraph CORE_NS ["Core Services"]
             AUTH_DEP[Deployment: auth-service\nReplicas: 3\nHPA: CPU 70%]
             USER_DEP[Deployment: user-service\nReplicas: 3\nHPA: CPU 70%]
+            KYC_DEP[Deployment: kyc-workflow-service\nReplicas: 3\nHPA: CPU 70%]
             ACC_DEP[Deployment: account-service\nReplicas: 5\nHPA: CPU 70%\nPDB: minAvailable 2]
             TXN_DEP[Deployment: transaction-service\nReplicas: 3\nHPA: CPU 70%]
             NOTIF_DEP[Deployment: notification-service\nReplicas: 2\nHPA: CPU 70%]
             LEDGER_DEP[Deployment: ledger-service\nReplicas: 2\nHPA: CPU 70%]
+            COMPLIANCE_DEP[Deployment: compliance-service\nReplicas: 2\nHPA: CPU 70%]
         end
         
         subgraph PLATFORM_NS ["Platform"]
@@ -1125,18 +1741,22 @@ graph TB
     GW_SVC --> GW_DEP
     GW_DEP --> AUTH_DEP
     GW_DEP --> USER_DEP
+    GW_DEP --> KYC_DEP
     GW_DEP --> ACC_DEP
     GW_DEP --> TXN_DEP
     GW_DEP --> NOTIF_DEP
     GW_DEP --> LEDGER_DEP
+    GW_DEP --> COMPLIANCE_DEP
     
     AUTH_DEP --> MYSQL_PRIMARY
     USER_DEP --> MYSQL_PRIMARY
+    KYC_DEP --> MYSQL_PRIMARY
     ACC_DEP --> MYSQL_PRIMARY
     ACC_DEP --> MYSQL_REPLICA
     ACC_DEP --> REDIS_CLUSTER
     TXN_DEP --> MYSQL_PRIMARY
     LEDGER_DEP --> MYSQL_PRIMARY
+    COMPLIANCE_DEP --> MYSQL_PRIMARY
     ALL_DEP[All Services] --> KAFKA_CLUSTER
     ALL_DEP --> EUREKA_DEP
     ALL_DEP --> CONFIG_DEP
@@ -1146,200 +1766,17 @@ graph TB
     ALL_DEP --> ZIPKIN
 ```
 
-### 11.3 Kubernetes Resources per Service
+### 12.3 Network Policies (Zero Trust) - Same as before
 
-| Service | Replicas | CPU Request/Limit | Memory Request/Limit | HPA | PDB | Probes |
-|---------|----------|-------------------|----------------------|-----|-----|--------|
-| api-gateway | 3 | 250m/1000m | 512Mi/1Gi | CPU 70% | minAvailable 2 | Liveness: /health/liveness, Readiness: /health/readiness |
-| auth-service | 3 | 250m/1000m | 512Mi/1Gi | CPU 70% | minAvailable 2 | Same |
-| user-service | 3 | 250m/1000m | 512Mi/1Gi | CPU 70% | minAvailable 2 | Same |
-| account-service | 5 | 500m/2000m | 1Gi/2Gi | CPU 70%, Mem 80% | minAvailable 3 | Same + Business health |
-| transaction-service | 3 | 250m/1000m | 512Mi/1Gi | CPU 70% | minAvailable 2 | Same |
-| notification-service | 2 | 100m/500m | 256Mi/512Mi | CPU 70% | minAvailable 1 | Same |
-| ledger-service | 2 | 250m/1000m | 512Mi/1Gi | CPU 70% | minAvailable 1 | Same |
-| eureka-server | 2 | 100m/500m | 256Mi/512Mi | - | minAvailable 1 | Same |
-| config-server | 2 | 100m/500m | 256Mi/512Mi | - | minAvailable 1 | Same |
-
-### 11.4 Network Policies (Zero Trust)
-
-```yaml
-# Example: Account Service NetworkPolicy
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: account-service-netpol
-  namespace: citicore-prod
-spec:
-  podSelector:
-    matchLabels:
-      app: account-service
-  policyTypes:
-  - Ingress
-  - Egress
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          name: citicore-prod
-    - podSelector:
-        matchLabels:
-          app: api-gateway
-    - podSelector:
-        matchLabels:
-          app: transaction-service
-    ports:
-    - protocol: TCP
-      port: 8083
-  egress:
-  - to:
-    - podSelector:
-        matchLabels:
-          app: mysql-primary
-    ports:
-    - protocol: TCP
-      port: 3306
-  - to:
-    - podSelector:
-        matchLabels:
-          app: mysql-replica
-    ports:
-    - protocol: TCP
-      port: 3306
-  - to:
-    - podSelector:
-        matchLabels:
-          app: redis
-    ports:
-    - protocol: TCP
-      port: 6379
-  - to:
-    - podSelector:
-        matchLabels:
-          app: kafka
-    ports:
-    - protocol: TCP
-      port: 9092
-  - to:
-    - podSelector:
-        matchLabels:
-          app: user-service
-    ports:
-    - protocol: TCP
-      port: 8082
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          name: kube-system
-    ports:
-    - protocol: UDP
-      port: 53  # DNS
-```
-
-### 11.5 CI/CD Pipeline
-
-```mermaid
-%%{init: {'theme': 'base'}}%%
-graph LR
-    subgraph CI ["Continuous Integration"]
-        PUSH[Push to Main/Develop]
-        CHECKOUT[Checkout Code]
-        SETUP[Setup JDK 17, Maven, Docker]
-        CACHE[Cache Maven Deps]
-        LINT[Checkstyle + SpotBugs + PMD]
-        TEST[Unit + Integration Tests\nTestcontainers]
-        COVERAGE[JaCoCo Coverage\n>80%]
-        SAST[CodeQL Analysis]
-        SCA[Dependency Check\nOWASP]
-        BUILD[Multi-stage Docker Build\nNon-root user]
-        SCAN[Trivy Container Scan]
-        PUSH_IMG[Push to GHCR/ECR\nTag: git-sha]
-    end
-    
-    subgraph CD ["Continuous Deployment"]
-        DEPLOY_STAGING[Helm Deploy to Staging\nNamespace: citicore-staging]
-        SMOKE[Smoke Tests\nPostman/Newman]
-        INTEGRATION[Integration Tests\nFull API Suite]
-        PERF[Performance Tests\nk6/JMeter]
-        APPROVE[Manual Approval\nProduction Gate]
-        DEPLOY_PROD[Helm Deploy to Production\nBlue-Green / Canary]
-        HEALTH[Health Verification\nRollback on Failure]
-        NOTIFY[Slack/Teams Notification]
-    end
-    
-    PUSH --> CHECKOUT --> SETUP --> CACHE
-    CACHE --> LINT --> TEST --> COVERAGE
-    COVERAGE --> SAST --> SCA --> BUILD
-    BUILD --> SCAN --> PUSH_IMG
-    PUSH_IMG --> DEPLOY_STAGING
-    DEPLOY_STAGING --> SMOKE --> INTEGRATION
-    INTEGRATION --> PERF --> APPROVE
-    APPROVE --> DEPLOY_PROD
-    DEPLOY_PROD --> HEALTH --> NOTIFY
-```
+### 12.4 CI/CD Pipeline - Same as before
 
 ---
 
-## 12. Monitoring & Observability
+## 13. Monitoring & Observability
 
-### 12.1 Observability Stack
+### 13.1 Observability Stack - Same as before
 
-```mermaid
-%%{init: {'theme': 'base'}}%%
-graph TB
-    subgraph APPLICATION ["Applications"]
-        SVC1[Auth Service]
-        SVC2[User Service]
-        SVC3[Account Service]
-        SVC4[Transaction Service]
-        SVC5[Notification Service]
-        SVC6[Ledger Service]
-        SVC7[API Gateway]
-    end
-    
-    subgraph INSTRUMENTATION ["Instrumentation"]
-        MICROMETER[Micrometer\nMetrics Facade]
-        TRACING[Micrometer Tracing\nBrave/Zipkin]
-        LOGGING[Logback + LogstashEncoder\nStructured JSON + MDC]
-    end
-    
-    subgraph COLLECTION ["Collection"]
-        PROM[Prometheus\nServiceMonitor Scraping]
-        LOKI[Loki + Promtail\nLog Aggregation]
-        ZIPKIN[Zipkin/Jaeger\nTrace Collection]
-    end
-    
-    subgraph STORAGE ["Storage"]
-        PROM_DB[(Prometheus TSDB\n15d Retention)]
-        LOKI_DB[(Loki Object Store\n30d Retention)]
-        ZIPKIN_DB[(Cassandra/ES\n7d Retention)]
-    end
-    
-    subgraph VISUALIZATION ["Visualization & Alerting"]
-        GRAF[Grafana\nDashboards]
-        ALERT[Alertmanager\nRoutes + Inhibitions]
-        KIBANA[Kibana\nLog Exploration]
-    end
-    
-    APPLICATION --> MICROMETER
-    APPLICATION --> TRACING
-    APPLICATION --> LOGGING
-    
-    MICROMETER --> PROM
-    TRACING --> ZIPKIN
-    LOGGING --> LOKI
-    
-    PROM --> PROM_DB
-    LOKI --> LOKI_DB
-    ZIPKIN --> ZIPKIN_DB
-    
-    PROM_DB --> GRAF
-    LOKI_DB --> GRAF
-    LOKI_DB --> KIBANA
-    ZIPKIN_DB --> GRAF
-    PROM_DB --> ALERT
-```
-
-### 12.2 Key Metrics (RED + USE + Business)
+### 13.2 Key Metrics (Updated with KYC Metrics)
 
 | Category | Metrics | Source |
 |----------|---------|--------|
@@ -1349,52 +1786,36 @@ graph TB
 | **Cache** | `cache_gets_total`, `cache_puts_total`, `cache_evictions_total` | Micrometer (Redis) |
 | **Kafka** | `kafka_consumer_fetch_manager_records_lag_max`, `kafka_producer_record_send_rate` | Micrometer (Kafka) |
 | **Business** | `banking.transfers.initiated`, `banking.transfers.completed`, `banking.transfers.failed`, `banking.transfers.reversed`, `banking.accounts.active`, `banking.balance.total` | Custom `BankingMetrics` |
+| **KYC Business** | `kyc.cases.submitted`, `kyc.cases.approved`, `kyc.cases.rejected`, `kyc.cases.escalated`, `kyc.cases.avg_processing_time`, `kyc.cases.sla_breaches` | Custom `KycMetrics` |
 | **Saga** | `saga.step.duration`, `saga.step.success`, `saga.step.failure`, `saga.compensation.triggered` | Custom |
 | **Outbox** | `outbox.events.pending`, `outbox.events.published`, `outbox.events.failed`, `outbox.poll.duration` | Custom |
+| **Security** | `auth.login.success`, `auth.login.failed`, `auth.lockout.triggered`, `auth.mfa.success`, `auth.mfa.failed` | Custom `SecurityMetrics` |
+| **RBAC** | `rbac.denied.by_role`, `rbac.denied.by_permission`, `rbac.separation_of_duties_violations` | Custom `RbacMetrics` |
 
-### 12.3 Distributed Tracing Context Propagation
+### 13.3 Distributed Tracing Context Propagation - Same as before
 
-```mermaid
-%%{init: {'theme': 'base'}}%%
-sequenceDiagram
-    participant Client
-    participant GW as API Gateway
-    participant SVC1 as Service A
-    participant KAFKA as Kafka
-    participant SVC2 as Service B
-
-    Client->>GW: Request (no trace headers)
-    GW->>GW: Create new trace\nGenerate traceId, spanId
-    GW->>SVC1: Forward with headers:\nX-B3-TraceId, X-B3-SpanId, X-B3-Sampled
-    SVC1->>SVC1: Extract headers → MDC\nCreate child span
-    SVC1->>KAFKA: Produce event\nInject trace headers into Kafka record
-    KAFKA->>SVC2: Consume event\nExtract trace headers → MDC\nContinue trace
-    SVC2->>SVC2: Create child span\nProcess event
-    SVC2->>ZIPKIN: Report spans
-    SVC1->>ZIPKIN: Report spans
-    GW->>ZIPKIN: Report spans
-```
-
-### 12.4 Health Checks
+### 13.4 Health Checks - Updated with KYC Service
 
 | Probe | Endpoint | Checks | Failure Action |
 |-------|----------|--------|----------------|
 | **Liveness** | `/actuator/health/liveness` | Process alive, no deadlock | Kubernetes restarts pod |
-| **Readiness** | `/actuator/health/readiness` | DB connectivity, Kafka, Redis, Feign targets, Business (outbox lag < 10k, replica lag < 30s) | Kubernetes removes from Service |
+| **Readiness** | `/actuator/health/readiness` | DB connectivity, Kafka, Redis, Feign targets, Business (outbox lag < 10k, replica lag < 30s, KYC SLA compliance) | Kubernetes removes from Service |
 | **Startup** | `/actuator/health/startup` | All readiness checks + migrations complete | Kubernetes waits (up to 5 min) |
 
-### 12.5 Key Dashboards
+### 13.5 Key Dashboards - Updated
 
 | Dashboard | Panels | Purpose |
 |-----------|--------|---------|
 | **System Overview** | Request rate, Error rate, Latency (p50/p95/p99), Saturation (CPU, Mem, DB pool) | Golden signals |
 | **Service Deep Dive** | Per-service RED, JVM, DB pool, Cache hit rate | Troubleshooting |
 | **Business KPIs** | Transfers/day, Success rate, Avg transfer time, Active accounts, Total balances | Business monitoring |
+| **KYC Workflow** | Cases submitted/approved/rejected, Avg processing time, SLA compliance, Officer workload, SLA breaches | KYC operations |
 | **Saga Monitor** | Saga in-flight, Step durations, Failure rates, Compensation rate | Transaction flow |
+| **Security Monitor** | Login success/failure, Lockouts, MFA, RBAC denials, SoD violations | Security posture |
 | **Kafka Monitor** | Consumer lag, Producer throughput, Under-replicated partitions | Event bus health |
 | **Database Monitor** | Query latency, Connections, Replication lag, Lock waits | Data layer health |
 
-### 12.6 Alerting Rules (Critical)
+### 13.6 Alerting Rules (Critical) - Updated
 
 | Alert | Condition | Severity | Runbook |
 |-------|-----------|----------|---------|
@@ -1404,14 +1825,17 @@ sequenceDiagram
 | `KafkaConsumerLag` | `kafka_consumer_fetch_manager_records_lag_max > 10000` | Warning | Scale consumers, check processing |
 | `OutboxLag` | `outbox_events_pending > 10000` | Critical | Check publisher, Kafka connectivity |
 | `ReplicaLag` | `mysql_replica_lag_seconds > 30` | Warning | Check replication, network |
+| `KycSlaBreach` | `kyc_cases_sla_breach > 0` | Critical | Review officer workload, reassign |
+| `KycSoDViolation` | `rbac_separation_of_duties_violations > 0` | Critical | Audit trail review, investigate |
+| `AuthLockoutSpike` | `rate(auth_lockout_triggered[5m]) > 10` | Warning | Check for brute force attack |
 | `DiskSpace` | `disk_usage_percent > 85` | Warning | Cleanup, expand volume |
 | `CertExpiry` | `ssl_cert_expiry_days < 30` | Warning | Renew certificate |
 
 ---
 
-## 13. End-to-End Workflows
+## 14. End-to-End Workflows
 
-### 13.1 Customer Onboarding Workflow
+### 14.1 Customer Onboarding Workflow (Updated with KYC Maker-Checker)
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
@@ -1433,14 +1857,35 @@ flowchart TD
     ACTIVATE --> ISSUE_TOKENS[Generate JWT Access + Refresh]
     ISSUE_TOKENS --> RETURN_TOKENS[Return Tokens]
     RETURN_TOKENS --> PROFILE[Customer Completes Profile\nPOST /users/profile]
-    PROFILE --> KYC[Customer Uploads KYC Docs\nPOST /users/kyc/upload]
-    KYC --> KYC_PENDING[KYC Status: PENDING]
-    KYC_PENDING --> ADMIN_REVIEW[Admin Reviews KYC\nGET/PUT /users/admin/kyc/*]
-    ADMIN_REVIEW --> APPROVE{KYC Approved?}
-    APPROVE -->|No| REJECT[Status: REJECTED, Notify]
-    APPROVE -->|Yes| APPROVED[Status: APPROVED, Notify]
-    APPROVED --> CREATE_ACCOUNT[Customer Creates Account\nPOST /accounts/create]
-    CREATE_ACCOUNT --> KYC_CHECK[Account Service: Feign KYC Status]
+    PROFILE --> KYC_UPLOAD[Customer Uploads KYC Docs\nPOST /users/kyc/upload]
+    KYC_UPLOAD --> KYC_SUBMIT[Customer Submits KYC\nPOST /users/kyc/submit]
+    KYC_SUBMIT --> KYC_PENDING[KYC Status: SUBMITTED]
+    KYC_PENDING --> KYC_WF_CREATE[KYC Workflow: Create Case\nStatus: SUBMITTED → PENDING_REVIEW]
+    KYC_WF_CREATE --> AUTO_ASSIGN[Auto-assign to KYC_OFFICER]
+    AUTO_ASSIGN --> NOTIFY_OFFICER[Notify Assigned Officer]
+    NOTIFY_OFFICER --> OFFICER_REVIEW[KYC Officer Reviews Case]
+    OFFICER_REVIEW --> REVIEW_ACTION{Officer Action}
+    REVIEW_ACTION -->|Request Info| REQUEST_INFO[Status: MORE_INFO_REQUIRED\nNotify Customer]
+    REQUEST_INFO --> CUSTOMER_RESPOND[Customer Provides Info]
+    CUSTOMER_RESPOND --> RESUBMITTED[Status: RESUBMITTED → UNDER_REVIEW]
+    RESUBMITTED --> OFFICER_REVIEW
+    REVIEW_ACTION -->|Recommend Approve| RECOMMEND_APPROVE[Status: RECOMMENDED_APPROVAL]
+    REVIEW_ACTION -->|Recommend Reject| RECOMMEND_REJECT[Status: RECOMMENDED_REJECTION]
+    RECOMMEND_APPROVE --> MANAGER_REVIEW[KYC Manager Reviews]
+    RECOMMEND_REJECT --> MANAGER_REVIEW
+    MANAGER_REVIEW --> MANAGER_ACTION{Manager Action}
+    MANAGER_ACTION -->|Approve| APPROVED[Status: APPROVED\nNotify Customer]
+    MANAGER_ACTION -->|Reject| REJECTED[Status: REJECTED\nNotify Customer + Reasons]
+    MANAGER_ACTION -->|Return for Review| RETURN_REVIEW[Status: UNDER_REVIEW\nNotify Officer]
+    MANAGER_ACTION -->|Escalate| ESCALATED[Status: ESCALATED\nNotify Compliance]
+    RETURN_REVIEW --> OFFICER_REVIEW
+    ESCALATED --> COMPLIANCE_RESOLVE[Compliance Resolves]
+    COMPLIANCE_RESOLVE --> OFFICER_REVIEW
+    APPROVED --> KYC_APPROVED_EVENT[Publish KYC_APPROVED Event]
+    KYC_APPROVED_EVENT --> ACCOUNT_CREATE[Customer Creates Account\nPOST /accounts/create]
+    REJECTED --> REAPPLY[Customer Can Reapply]
+    REAPPLY --> KYC_UPLOAD
+    ACCOUNT_CREATE --> KYC_CHECK[Account Service: Feign KYC Status]
     KYC_CHECK -->|Not Approved| ERROR3[Return 400: KYC Required]
     KYC_CHECK -->|Approved| CREATE_ACC_DB[Create Account (SAVINGS/CURRENT)]
     CREATE_ACC_DB --> PUBLISH_ACC[Publish ACCOUNT_CREATED Event]
@@ -1449,214 +1894,144 @@ flowchart TD
     SUCCESS --> END([Onboarding Complete])
 ```
 
-### 13.2 Account Management Workflow
+### 14.2 KYC Officer Review Workflow
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
 flowchart TD
-    START([Authenticated Customer]) --> ACTION{Action?}
-    
-    ACTION -->|View Balance| BALANCE[GET /accounts/balance/{accNo}]
-    BALANCE --> CACHE_HIT{Redis Hit?}
-    CACHE_HIT -->|Yes| RETURN_CACHE[Return Cached Balance]
-    CACHE_HIT -->|No| QUERY_REPLICA[Query Replica DB]
-    QUERY_REPLICA --> CACHE_PUT[Update Redis Cache (5min TTL)]
-    CACHE_PUT --> RETURN_BALANCE[Return Balance]
-    
-    ACTION -->|Deposit| DEPOSIT[POST /accounts/deposit\n{account, amount, description}]
-    DEPOSIT --> VALIDATE_DEP{Valid Amount > 0?}
-    VALIDATE_DEP -->|No| ERR_DEP[400 Invalid Amount]
-    VALIDATE_DEP -->|Yes| LOCK_ACC_DEP[SELECT FOR UPDATE Account]
-    LOCK_ACC_DEP --> UPDATE_BAL_DEP[balance = balance + amount]
-    UPDATE_BAL_DEP --> STMT_DEP[Insert AccountStatement (CREDIT)]
-    STMT_DEP --> OUTBOX_DEP[Insert Outbox: account-events-topic]
-    OUTBOX_DEP --> LEDGER_DEP[Ledger: Post Journal\nDebit: Cash / Credit: Customer Deposits]
-    LEDGER_DEP --> COMMIT_DEP[Commit Transaction]
-    COMMIT_DEP --> NOTIFY_DEP[Kafka → Notification: Deposit Email]
-    NOTIFY_DEP --> RET_DEP[Return Success]
-    
-    ACTION -->|Withdraw| WITHDRAW[POST /accounts/withdraw\n{account, amount, description}]
-    WITHDRAW --> VALIDATE_WD{Valid Amount > 0?}
-    VALIDATE_WD -->|No| ERR_WD[400 Invalid Amount]
-    VALIDATE_WD -->|Yes| LOCK_ACC_WD[SELECT FOR UPDATE Account]
-    LOCK_ACC_WD --> CHECK_BAL{balance >= amount + minBalance?}
-    CHECK_BAL -->|No| ERR_INSUFF[400 Insufficient Balance]
-    CHECK_BAL -->|Yes| UPDATE_BAL_WD[balance = balance - amount]
-    UPDATE_BAL_WD --> STMT_WD[Insert AccountStatement (DEBIT)]
-    STMT_WD --> OUTBOX_WD[Insert Outbox: account-events-topic]
-    OUTBOX_WD --> LEDGER_WD[Ledger: Post Journal\nDebit: Customer Deposits / Credit: Cash]
-    LEDGER_WD --> COMMIT_WD[Commit Transaction]
-    COMMIT_WD --> NOTIFY_WD[Kafka → Notification: Withdrawal Email]
-    NOTIFY_WD --> RET_WD[Return Success]
-    
-    ACTION -->|Statement| STMT[GET /accounts/statement/{accNo}\n{page, size, fromDate, toDate}]
-    STMT --> QUERY_STMT[Query Replica DB with Pagination]
-    QUERY_STMT --> RET_STMT[Return Paginated Statements]
-    
-    ACTION -->|Close Account| CLOSE[POST /accounts/{accNo}/close]
-    CLOSE --> CHECK_ZERO{balance == 0?}
-    CHECK_ZERO -->|No| ERR_BAL[400: Transfer Balance First]
-    CHECK_ZERO -->|Yes| CHECK_HOLDS{No Regulatory Holds?}
-    CHECK_HOLDS -->|No| ERR_HOLD[400: Regulatory Hold]
-    CHECK_HOLDS -->|Yes| UPDATE_STATUS[status = CLOSED]
-    UPDATE_STATUS --> LEDGER_CLOSE[Ledger: Close Sub-Ledger Account]
-    LEDGER_CLOSE --> RET_CLOSE[Return Success]
-    
-    RETURN_CACHE --> END
-    RETURN_BALANCE --> END
-    RET_DEP --> END
-    RET_WD --> END
-    RET_STMT --> END
-    RET_CLOSE --> END
-    ERR_DEP --> END
-    ERR_WD --> END
-    ERR_INSUFF --> END
-    ERR_BAL --> END
-    ERR_HOLD --> END
+    START([KYC Officer Login]) --> DASHBOARD[View Assigned Cases\nGET /kyc/cases/assigned]
+    DASHBOARD --> SELECT_CASE[Select Case: KYC-20261118-001]
+    SELECT_CASE --> VIEW_CASE[GET /kyc/cases/{caseId}\nView Profile, Documents, History]
+    VIEW_CASE --> REVIEW_DOCS[Review Each Document\nGET /kyc/cases/{caseId}/documents/{docId}]
+    REVIEW_DOCS --> PERFORM_CHECKS[Perform Verification Checks\n- Document Authenticity\n- OCR Data Match\n- Face Match (if selfie)\n- Sanctions/PEP Screening]
+    PERFORM_CHECKS --> RECORD_FINDINGS[Record Findings per Document\nPOST /kyc/cases/{caseId}/findings]
+    RECORD_FINDINGS --> DECISION_POINT{All Checks Pass?}
+    DECISION_POINT -->|No - Missing Info| REQUEST_INFO[POST /kyc/cases/{caseId}/request-info\n{requiredDocuments, remarks}]
+    REQUEST_INFO --> NOTIFY_CUSTOMER[Kafka → Notification: Customer Action Required]
+    NOTIFY_CUSTOMER --> WAIT_RESPONSE[Wait for Customer Resubmission]
+    WAIT_RESPONSE --> RESUBMITTED[Case Status: RESUBMITTED]
+    RESUBMITTED --> VIEW_CASE
+    DECISION_POINT -->|No - Deficiency| RECOMMEND_REJECT[POST /kyc/cases/{caseId}/recommend\n{REJECT, rejectionReason, findings}]
+    RECOMMEND_REJECT --> MANAGER_QUEUE[Case → PENDING_MANAGER_APPROVAL]
+    DECISION_POINT -->|Yes - All Clear| RECOMMEND_APPROVE[POST /kyc/cases/{caseId}/recommend\n{APPROVE, remarks, findings}]
+    RECOMMEND_APPROVE --> MANAGER_QUEUE
+    MANAGER_QUEUE --> NOTIFY_MANAGER[Kafka → Notification: Case Ready for Decision]
+    NOTIFY_MANAGER --> END([Officer Review Complete])
 ```
 
-### 13.3 Fund Transfer Workflow (Detailed)
+### 14.3 KYC Manager Approval Workflow
 
 ```mermaid
 %%{init: {'theme': 'base'}}%%
 flowchart TD
-    START([Customer Initiates Transfer]) --> REQUEST[POST /transactions/transfer\n{fromAccount, toAccount, amount, idempotencyKey}]
-    REQUEST --> GW[API Gateway: JWT Validation, Rate Limit]
-    GW --> TXN_SVC[Transaction Service]
-    TXN_SVC --> VALIDATE_REQ{Valid Request?}
-    VALIDATE_REQ -->|No| ERR_VALID[400: Validation Error]
-    VALIDATE_REQ -->|Yes| CHECK_IDEMP{Idempotency Key Exists?}
-    CHECK_IDEMP -->|Yes| RETURN_EXISTING[Return Existing txnRef]
-    CHECK_IDEMP -->|No| CHECK_LIMIT{Daily Limit OK?}
-    CHECK_LIMIT -->|No| ERR_LIMIT[400: Daily Limit Exceeded]
-    CHECK_LIMIT -->|Yes| FEIGN_VALIDATE[Feign: AccountService.validateTransfer]
-    FEIGN_VALIDATE --> VALIDATE_RES{Valid?}
-    VALIDATE_RES -->|No| ERR_VALIDATE[400: Invalid Transfer]
-    VALIDATE_RES -->|Yes| SAVE_TXN[INSERT Transaction (INITIATED)\n+ OutboxEvent (transfer-requested)]
-    SAVE_TXN --> SAVE_IDEMP[INSERT IdempotencyKey (user-scoped)]
-    SAVE_IDEMP --> RETURN_202[Return 202 Accepted {txnRef}]
-    RETURN_202 --> OUTBOX_PUB[OutboxPublisher → Kafka: transfer-requested-topic]
-    
-    OUTBOX_PUB --> DEBIT_CONSUMER[Account Service: DebitConsumer]
-    DEBIT_CONSUMER --> LOCK_SENDER[SELECT FOR UPDATE Sender Account]
-    LOCK_SENDER --> CHECK_SENDER{Active, Sufficient Balance?}
-    CHECK_SENDER -->|No| DEBIT_FAIL[Save DebitFailedEvent → Outbox]
-    CHECK_SENDER -->|Yes| DEBIT_UPDATE[balance -= amount]
-    DEBIT_UPDATE --> STMT_DEBIT[AccountStatement (DEBIT)]
-    STMT_DEBIT --> OUTBOX_DEBIT[Outbox: debit-success-topic]
-    OUTBOX_DEBIT --> COMMIT_DEBIT[Commit]
-    COMMIT_DEBIT --> KAFKA_DEBIT[OutboxPublisher → debit-success-topic]
-    
-    KAFKA_DEBIT --> CREDIT_CONSUMER[Account Service: CreditConsumer]
-    CREDIT_CONSUMER --> LOCK_RECEIVER[SELECT FOR UPDATE Receiver Account]
-    LOCK_RECEIVER --> CHECK_RECEIVER{Active, Not Closed?}
-    CHECK_RECEIVER -->|No| CREDIT_FAIL[Save CreditFailedEvent → Outbox]
-    CHECK_RECEIVER -->|Yes| CREDIT_UPDATE[balance += amount]
-    CREDIT_UPDATE --> STMT_CREDIT[AccountStatement (CREDIT)]
-    STMT_CREDIT --> OUTBOX_CREDIT[Outbox: credit-success-topic]
-    OUTBOX_CREDIT --> COMMIT_CREDIT[Commit]
-    COMMIT_CREDIT --> KAFKA_CREDIT[OutboxPublisher → credit-success-topic]
-    
-    KAFKA_CREDIT --> TXN_SUCCESS[Transaction Service: TransactionEventConsumer]
-    TXN_SUCCESS --> UPDATE_TXN_SUCCESS[UPDATE Transaction: CREDIT_SUCCESS]
-    UPDATE_TXN_SUCCESS --> NOTIFY_SUCCESS[Kafka → Notification: Success Email]
-    NOTIFY_SUCCESS --> LEDGER_TXN[Ledger: Post Journal\nDebit: Customer Deposits (Sender)\nCredit: Customer Deposits (Receiver)]
-    LEDGER_TXN --> END_SUCCESS([Transfer Complete])
-    
-    DEBIT_FAIL --> KAFKA_DEBIT_FAIL[OutboxPublisher → debit-failed-topic]
-    KAFKA_DEBIT_FAIL --> TXN_DEBIT_FAIL[Transaction Service: TransactionFailureConsumer]
-    TXN_DEBIT_FAIL --> UPDATE_TXN_FAIL[UPDATE Transaction: FAILED]
-    UPDATE_TXN_FAIL --> NOTIFY_DEBIT_FAIL[Kafka → Notification: Failed Email]
-    NOTIFY_DEBIT_FAIL --> END_FAIL([Transfer Failed])
-    
-    CREDIT_FAIL --> KAFKA_CREDIT_FAIL[OutboxPublisher → credit-failed-topic]
-    KAFKA_CREDIT_FAIL --> TXN_CREDIT_FAIL[Transaction Service: TransactionFailureConsumer]
-    TXN_CREDIT_FAIL --> UPDATE_TXN_CF[UPDATE Transaction: FAILED]
-    UPDATE_TXN_CF --> OUTBOX_REVERSAL[Outbox: reversal-topic]
-    OUTBOX_REVERSAL --> KAFKA_REVERSAL[OutboxPublisher → reversal-topic]
-    
-    KAFKA_REVERSAL --> REVERSAL_CONSUMER[Account Service: ReversalConsumer]
-    REVERSAL_CONSUMER --> LOCK_SENDER_REV[SELECT FOR UPDATE Sender Account]
-    LOCK_SENDER_REV --> REFUND[balance += amount]
-    REFUND --> STMT_REV[AccountStatement (CREDIT - REVERSAL)]
-    STMT_REV --> OUTBOX_REV_SUCCESS[Outbox: reversal-success-topic]
-    OUTBOX_REV_SUCCESS --> COMMIT_REV[Commit]
-    COMMIT_REV --> KAFKA_REV_SUCCESS[OutboxPublisher → reversal-success-topic]
-    
-    KAFKA_REV_SUCCESS --> TXN_REV[Transaction Service: TransactionEventConsumer]
-    TXN_REV --> UPDATE_TXN_REV[UPDATE Transaction: REVERSED]
-    UPDATE_TXN_REV --> NOTIFY_REV[Kafka → Notification: Reversal Email]
-    NOTIFY_REV --> LEDGER_REV[Ledger: Reversal Journal Entry]
-    LEDGER_REV --> END_REV([Transfer Reversed])
-    
-    ERR_VALID --> END_FAIL
-    RETURN_EXISTING --> END_SUCCESS
-    ERR_LIMIT --> END_FAIL
-    ERR_VALIDATE --> END_FAIL
+    START([KYC Manager Login]) --> DASHBOARD[View Pending Approval Cases\nGET /kyc/cases/pending-approval]
+    DASHBOARD --> SELECT_CASE[Select Case: KYC-20261118-001]
+    SELECT_CASE --> VIEW_REVIEW[GET /kyc/cases/{caseId}/review\nView Officer Findings, Recommendation]
+    VIEW_REVIEW --> SEPARATION_CHECK{Manager == Reviewing Officer?}
+    SEPARATION_CHECK -->|Yes| BLOCK[BLOCK: Cannot approve own review\nReturn 403 Forbidden]
+    SEPARATION_CHECK -->|No| MANAGER_DECISION{Manager Decision}
+    MANAGER_DECISION -->|Approve| APPROVE[POST /kyc/cases/{caseId}/approve\n{approvalReason}]
+    MANAGER_DECISION -->|Reject| REJECT[POST /kyc/cases/{caseId}/reject\n{rejectionReason, permittedReasons}]
+    MANAGER_DECISION -->|Return for Review| RETURN[POST /kyc/cases/{caseId}/return\n{returnReason}]
+    MANAGER_DECISION -->|Escalate| ESCALATE[POST /kyc/cases/{caseId}/escalate\n{escalationReason}]
+    APPROVE --> UPDATE_STATUS[Status: APPROVED\nDecidingManager = currentUser]
+    REJECT --> UPDATE_STATUS[Status: REJECTED\nDecidingManager = currentUser]
+    RETURN --> UPDATE_STATUS[Status: UNDER_REVIEW\nAssignedOfficer = originalOfficer]
+    ESCALATE --> UPDATE_STATUS[Status: ESCALATED\nEscalationReason recorded]
+    UPDATE_STATUS --> PUBLISH_EVENT[Publish kyc-case-topic\nAPPROVED/REJECTED/RETURNED/ESCALATED]
+    PUBLISH_EVENT --> NOTIFY[Kafka → Notification Service]
+    NOTIFY --> CUSTOMER_NOTIFY[Notify Customer]
+    NOTIFY --> ACCOUNT_SVC[If APPROVED → Account Service enables account creation]
+    NOTIFY --> COMPLIANCE[Compliance Service: Audit Trail]
+    CUSTOMER_NOTIFY --> END([Manager Decision Complete])
+    BLOCK --> END
 ```
 
----
+### 14.4 Account Management Workflow - Same as before (with dual balance)
 
-## 14. Architecture Review Observations
-
-> **IMPORTANT:** The following observations are documented for review and approval. **Do not implement changes without explicit approval.**
-
-### 14.1 Critical Gaps Requiring Decision
-
-| ID | Observation | Impact | Recommended Action | Status |
-|----|-------------|--------|-------------------|--------|
-| **OBS-001** | **No Double-Entry General Ledger Implemented** - Current AccountStatement is single-entry; no Chart of Accounts, Journal Entries, or Trial Balance. This is a **fundamental banking requirement** for regulatory compliance (SOX, IFRS, RBI). | **CRITICAL** - Cannot operate as licensed bank without GL. Financial statements impossible. Audit trail incomplete. | Implement Ledger Service with: Chart of Accounts, Journal Entry posting, Balanced journal validation (DB trigger), Trial balance generation, GL reconciliation jobs, Sub-ledger to GL mapping. | **Documented - Awaiting Approval** |
-| **OBS-002** | **Cross-Database Referential Integrity Not Enforced** - MySQL doesn't support cross-database FKs. Current design relies on application-level checks + reconciliation jobs. | **HIGH** - Data inconsistency risk. Orphaned records possible. Audit failures. | **Option A:** Single database with schemas (preferred for integrity)<br>**Option B:** Application-level validation + scheduled reconciliation (current)<br>**Option C:** Database links (not recommended) | **Documented - Awaiting Decision** |
-| **OBS-003** | **Available vs Ledger Balance Not Implemented** - Single `balance` column used. No support for authorization holds (card auth, pending transfers). | **HIGH** - Cannot support card payments, auth holds, or proper available balance display. | Add `available_balance` column. Implement hold/release API. Modify debit/credit to affect available first, then ledger on settlement. | **Documented - Awaiting Approval** |
-| **OBS-004** | **Authentication Security Gaps (P0)** - No rate limiting on auth endpoints, 6-digit OTP, no account lockout, no password policy, no password reset, no MFA. | **CRITICAL** - OWASP Top 10 violations. Brute force, credential stuffing, account takeover risk. | Implement: Rate limiting (5 req/min login), 8-char alphanumeric OTP, Failed attempt tracking (5/15min), Password policy (12+ chars, complexity), Password reset flow, TOTP MFA. | **Documented - Approved for Phase 0** |
-| **OBS-005** | **Authorization Gaps (P0)** - Account Service and User Service have `.permitAll()` on all endpoints. No ownership checks on credit(). No RBAC enforcement. | **CRITICAL** - BOLA/BFLA vulnerabilities. Unauthenticated access to financial operations. | Fix SecurityConfig: require authentication. Add ownership validation. Implement @PreAuthorize on admin endpoints. | **Documented - Approved for Phase 0** |
-| **OBS-006** | **No Dead Letter Queue Configuration** - Kafka consumers have no DLQ. Failed messages may be lost or block processing. | **HIGH** - Message loss, processing stalls, no visibility into failures. | Configure DLQ for all topics. Add retry with exponential backoff (max 3). Add DLQ monitoring/alerting. | **Documented - Approved for Phase 0** |
-| **OBS-007** | **Idempotency Key Not User-Scoped** - Global unique constraint allows cross-user collision. | **HIGH** - User A's idempotency key could reveal User B's transaction. | Add `auth_user_id` to IdempotencyKey. Unique constraint on `(auth_user_id, idempotency_key)`. | **Documented - Approved for Phase 0** |
-| **OBS-008** | **Single Kafka Broker (No HA)** - Docker Compose uses single broker. No replication factor > 1. | **HIGH** - Single point of failure. Message loss on restart. | Production: 3-broker cluster, RF=3, min.insync.replicas=2. | **Documented - Infrastructure Decision** |
-| **OBS-009** | **No Database Backup/Recovery Strategy** - Only Docker volume persistence. No PITR, no tested restores. | **CRITICAL** - Data loss risk. RPO/RTO undefined. | Implement: Percona XtraBackup daily + 15min binlog. PITR tested quarterly. Cross-region replication. | **Documented - Awaiting Approval** |
-| **OBS-010** | **No Secrets Management** - JWT secret, DB passwords in env vars/docker-compose. | **HIGH** - Secrets in git history, CI logs, container inspect. | Integrate HashiCorp Vault or AWS Secrets Manager. | **Documented - Awaiting Approval** |
-| **OBS-011** | **No Network Segmentation** - Single Docker network for all services. | **MEDIUM** - Lateral movement risk if one service compromised. | Kubernetes: NetworkPolicies per tier (ingress, services, data). | **Documented - K8s Implementation** |
-| **OBS-012** | **Docker Images Run as Root** - No USER directive in Dockerfiles. | **HIGH** - Container escape → host compromise. | Add non-root user (UID 1000) to all Dockerfiles. | **Documented - Approved for Phase 0** |
-| **OBS-013** | **No TLS Configuration for Database** - MySQL connections unencrypted. | **MEDIUM** - Credentials and data in transit exposed. | Enable MySQL TLS: `useSSL=true&requireSSL=true&verifyServerCertificate=true` | **Documented - Awaiting Approval** |
-| **OBS-014** | **No Encryption at Rest for PII** - Email, phone, address, KYC docs stored in plaintext. | **HIGH** - GDPR/PDPB non-compliance. Data breach impact. | MySQL TDE for tablespace encryption. Column-level encryption for PII. S3 SSE-KMS for KYC docs. | **Documented - Awaiting Approval** |
-| **OBS-015** | **Transaction Isolation TOCTOU Risk** - `validateTransfer` uses non-locking read; balance may change before debit. | **MEDIUM** - Race condition could allow overdraft. | Option A: Remove pre-validation (rely on debit locking). Option B: Make validateTransfer locking (adds latency). | **Documented - Awaiting Decision** |
-| **OBS-016** | **No Fee/Commission Engine** - No support for transaction fees, interchange, service charges. | **MEDIUM** - Revenue leakage. Cannot implement pricing tiers. | Implement Fee Engine: configurable rules, per-transaction assessment, ledger posting to income accounts. | **Documented - Future Enhancement** |
-| **OBS-017** | **No Interest Accrual Engine** - Savings accounts don't accrue interest. | **HIGH** - Regulatory requirement. Customer expectation. | Daily accrual job. Monthly capitalization. Configurable rates per tier. TDS withholding. | **Documented - Phase 2** |
-| **OBS-018** | **Beneficiary Management Missing** - No payee registry, no penny drop verification. | **HIGH** - Cannot do repeat transfers securely. User experience gap. | Implement Beneficiary entity + CRUD. Penny drop (₹1) verification. Beneficiary limits. | **Documented - Phase 2** |
-| **OBS-019** | **Account Statement `txn_ref` Global Unique** - Prevents same txnRef across accounts (legitimate for transfers). | **MEDIUM** - BUG-019: Transfer creates two statements with same txnRef (debit + credit). | Change to composite unique: `(account_number, txn_ref)`. | **Documented - Approved for Phase 0** |
-| **OBS-020** | **No Circuit Breakers on Feign Clients** - Transaction→Account and Account→User calls unprotected. | **HIGH** - Cascade failures. Service down → entire transfer flow breaks. | Add Resilience4j circuit breakers with fallbacks. Fail-closed for KYC (no account without KYC). | **Documented - Phase 3** |
-
-### 14.2 Design Decisions Requiring Confirmation
-
-| ID | Decision Point | Options | Current Choice | Recommendation |
-|----|----------------|---------|----------------|----------------|
-| **DEC-001** | **Saga Orchestration vs Choreography** | Orchestration (central coordinator) vs Choreography (event-driven) | Choreography (current) | Keep choreography for simplicity; add saga state persistence for observability |
-| **DEC-002** | **Database per Service vs Single Database** | Separate DBs (current) vs Single DB with schemas | Separate DBs | **Recommend: Single DB with schemas** for referential integrity, simpler transactions, easier reporting |
-| **DEC-003** | **Primary/Replica on Same Host** | Same host (current) vs Separate AZ | Same host | **Must change for production**: Replica in different AZ for HA |
-| **DEC-004** | **Kafka Replication Factor** | RF=1 (current) vs RF=3 | RF=1 | **Must change for production**: RF=3, min.insync.replicas=2 |
-| **DEC-005** | **Service-to-Service Auth** | Propagate user JWT vs Service tokens | Propagate user JWT | Keep user JWT propagation; add `ROLE_SERVICE` for internal-only endpoints |
-| **DEC-006** | **Account Number Format** | `CITI` + 12 digits (current) vs IBAN vs Custom | `CITI` + 12 digits | Keep current; ensure uniqueness via sequence/Redis |
-| **DEC-007** | **Currency Support** | INR only (current) vs Multi-currency | INR only | Design for multi-currency: add `currency` column, exchange rate service |
-| **DEC-008** | **Audit Log Storage** | Database table vs Append-only file vs Immutable ledger | None (planned) | **Recommend: Immutable ledger** (append-only table + crypto verification) |
-
-### 14.3 Technical Debt Items
-
-| ID | Component | Debt Description | Effort | Priority |
-|----|-----------|------------------|--------|----------|
-| **TD-001** | All Services | `ddl-auto: update` in production config | Low | P0 (Must change to `validate`) |
-| **TD-002** | All Services | No Flyway migrations | Medium | P0 |
-| **TD-003** | Auth Service | `System.out.println` debug logging | Low | P0 |
-| **TD-004** | All Services | Plain text logging (no JSON, no correlation IDs) | Medium | P1 |
-| **TD-005** | Account Service | `RoutingDataSource` with AOP - complex, hard to test | Medium | P2 (Refactor) |
-| **TD-006** | Transaction Service | Saga state not persisted (only in Kafka) | High | P1 (Add saga state machine) |
-| **TD-007** | Kafka Events | Shared library `kafka-events` - versioning coupling | Medium | P2 (Schema registry) |
-| **TD-008** | Config Server | Native profile only - no Git backend for prod | Low | P1 |
-| **TD-009** | All Services | No API versioning strategy beyond `/v1/` | Low | P2 |
-| **TD-010** | Account Service | Balance query forces primary for consistency (bypasses replica) | Low | P2 (Optimize) |
+### 14.5 Fund Transfer Workflow (Detailed) - Same as before
 
 ---
 
-## Appendix A: Glossary
+## 15. Architecture Review Observations (Updated)
+
+### 15.1 Existing Design Decisions Retained
+
+| Decision | Description | Status |
+|----------|-------------|--------|
+| **Schema per Service** | Each microservice owns its schema within a single RDS MySQL deployment; no shared schemas; separate credentials per service | ✅ Retained |
+| **Event-Driven Architecture** | Kafka for async communication; transactional outbox for reliability | ✅ Retained |
+| **Saga Pattern (Hybrid)** | Orchestration for fund transfers; Choreography for notifications; Async event consumption for audit | ✅ Retained |
+| **Primary/Replica Routing** | Account Service read/write splitting | ✅ Retained |
+| **Redis Cache-Aside** | Balance caching with 5min TTL | ✅ Retained |
+| **Double-Entry Ledger (Planned)** | General Ledger service for regulatory compliance | ✅ Retained |
+| **Spring Cloud Gateway** | Reactive routing, JWT validation, rate limiting | ✅ Retained |
+| **Eureka Service Discovery (Local Only)** | Local/Docker Compose service registry | ✅ Retained |
+| **Transactional Outbox** | Reliable event publishing | ✅ Retained |
+| **Pessimistic Locking** | SELECT FOR UPDATE for account balance operations | ✅ Retained |
+
+### 15.2 New RBAC Decisions
+
+| Decision | Description | Impact |
+|----------|-------------|--------|
+| **9 System Roles** | CUSTOMER, KYC_OFFICER, KYC_MANAGER, SUPPORT_AGENT, OPERATIONS_OFFICER, COMPLIANCE_OFFICER, ADMIN, AUDITOR, SERVICE | Replaces 5-role model; supports separation of duties |
+| **25 Granular Permissions** | Fine-grained permissions per resource and action | Enables least-privilege access |
+| **Role-Permission Matrix** | Explicit mapping (Section 3.4) | Auditable, configurable |
+| **User-to-Role Assignment** | Self-registration (CUSTOMER), Admin assignment (staff), Manager case assignment (officers) | Clear ownership |
+| **Resource Ownership & Scopes** | Customer: own data; Officers: assigned cases; Managers: authorized cases; Staff: role-based | Enforces data isolation |
+| **JWT Claims with Permissions** | Roles + permissions + case assignments in token | Enables stateless authorization |
+| **Permission Revocation Strategy** | 15min JWT expiry + Redis cache eviction + Refresh token revocation | Near-real-time revocation |
+| **API Gateway RBAC Enforcement** | Coarse-grained check at gateway + fine-grained @PreAuthorize in services | Defense in depth |
+| **Backend Service Independent Enforcement** | Each service validates JWT, checks permissions, enforces ownership | No reliance on gateway alone |
+| **Separation of Duties (SoD) Engine** | KYC Workflow Service enforces officer ≠ manager for same case | Regulatory compliance |
+| **Security Audit Logging** | Immutable audit trail for all KYC transitions, auth events, admin actions | Compliance, forensics |
+
+### 15.3 New KYC Workflow Decisions
+
+| Decision | Description | Impact |
+|----------|-------------|--------|
+| **13-State KYC Lifecycle** | DRAFT → SUBMITTED → PENDING_REVIEW → UNDER_REVIEW → MORE_INFO_REQUIRED → RESUBMITTED → RECOMMENDED_APPROVAL/REJECTION → PENDING_MANAGER_APPROVAL → APPROVED/REJECTED/ESCALATED | Complete traceability |
+| **Maker-Checker Enforcement** | Officer reviews & recommends; Manager approves/rejects; Officer ≠ Manager | Regulatory requirement |
+| **Case Assignment Model** | Manager assigns to Officer; Auto-assignment option; Reassignment support | Workload distribution |
+| **SLA Monitoring** | Case SLA deadlines; Breach alerts; Escalation path | Operational excellence |
+| **Audit Trail per Transition** | Actor, role, timestamp, previous/new state, reason, metadata | Full traceability |
+| **Document Access Control** | Pre-signed URLs; Role-based visibility; Encryption at rest (SSE-KMS) | Data protection |
+| **KYC Workflow Service** | New microservice (Port 8087) owning KYC case lifecycle | Separation of concerns |
+| **KYC Events** | kyc-case-topic, kyc-notification-topic for workflow events | Decoupled communication |
+| **Account Creation Gating** | Account Service checks KYC status via Feign + Kafka event | Prevents accounts without KYC |
+
+### 15.4 Existing Design Conflicts Discovered
+
+| Conflict | Description | Resolution |
+|----------|-------------|------------|
+| **User Service SecurityConfig** | References `/accounts/**` instead of `/users/**` (copy-paste bug) | Fixed in SecurityConfig |
+| **Account Service PermitAll** | All endpoints public (SEC-009) | Fixed: require authentication + RBAC |
+| **User Service PermitAll** | All endpoints public (SEC-010) | Fixed: require authentication + RBAC |
+| **Saga Choreography vs Orchestration** | Documentation says choreography but Transaction Service acts as orchestrator | Clarified: Choreography with Transaction Service as initiator |
+| **Cross-DB Referential Integrity** | Database per service but FK references across DBs | Application-level validation + reconciliation jobs (documented) |
+| **Idempotency Key Not User-Scoped** | Global unique constraint allows cross-user collision | Fixed: composite unique (auth_user_id, idempotency_key) |
+| **Account Statement txn_ref Unique** | Global unique prevents transfer debit+credit with same txnRef | Fixed: composite unique (account_number, txn_ref) |
+| **KYC Review in User Service** | KYC review logic mixed with profile management | Moved to dedicated KYC Workflow Service |
+| **Single KYC Status** | User Service has simple KYC_STATUS enum | Replaced with full KYC Case state machine |
+
+### 15.5 Decisions Requiring Approval
+
+| Decision | Options | Recommendation | Status |
+|----------|---------|----------------|--------|
+| **DEC-001: Database Topology** | Single DB with schemas vs Multi-DB with app-level integrity | Single DB with schemas for referential integrity | **Pending** |
+| **DEC-002: Saga Pattern** | Pure choreography vs Orchestration | Keep choreography; Transaction Service as initiator only | **Pending** |
+| **DEC-003: KYC Service Ownership** | KYC Workflow Service vs Extended User Service | Dedicated KYC Workflow Service (cleaner separation) | **Approved** |
+| **DEC-004: Case Assignment** | Manager assigns vs Auto-assignment (round-robin) | Hybrid: Auto-assign with Manager override | **Approved** |
+| **DEC-005: SoD Enforcement Location** | Gateway vs KYC Workflow Service vs Both | KYC Workflow Service (business logic) + Gateway (coarse) | **Approved** |
+| **DEC-006: JWT Claims Size** | All permissions in JWT vs Reference to permission service | Permissions in JWT (15min expiry, stateless) | **Approved** |
+| **DEC-007: Ledger Service** | Separate microservice vs Embedded in Account Service | Separate microservice (regulatory independence) | **Approved** |
+| **DEC-008: Compliance Service** | Build vs Buy (sanctions/PEP screening) | Build abstraction; integrate vendor APIs | **Approved** |
+| **DEC-009: MFA Methods** | TOTP only vs TOTP + SMS + Email | TOTP primary; Email OTP fallback | **Approved** |
+| **DEC-010: Document Malware Scanning** | S3 Object Lambda + ClamAV vs Vendor API | S3 Object Lambda + ClamAV (cost-effective) | **Pending** |
+
+---
+
+## Appendix A: Glossary (Updated)
 
 | Term | Definition |
 |------|------------|
@@ -1669,10 +2044,18 @@ flowchart TD
 | **TOCTOU** | Time-of-Check-Time-of-Use race condition |
 | **BOLA** | Broken Object Level Authorization (OWASP API1) |
 | **BFLA** | Broken Function Level Authorization (OWASP API5) |
+| **RBAC** | Role-Based Access Control |
+| **ABAC** | Attribute-Based Access Control |
+| **SoD** | Separation of Duties |
+| **Maker-Checker** | Dual-control workflow where one role creates/recommends and another approves |
+| **KYC** | Know Your Customer - identity verification process |
+| **PEP** | Politically Exposed Person |
+| **SAR** | Suspicious Activity Report |
 | **RPO** | Recovery Point Objective - max data loss tolerance |
 | **RTO** | Recovery Time Objective - max downtime tolerance |
 | **PITR** | Point-in-Time Recovery |
 | **TDE** | Transparent Data Encryption |
+| **SSE-KMS** | Server-Side Encryption with KMS-managed keys |
 
 ---
 
@@ -1686,6 +2069,47 @@ flowchart TD
 | `BANKING_FUNCTIONALITY_GAP_ANALYSIS.md` | Functional coverage vs banking requirements |
 | `IMPLEMENTATION_ROADMAP.md` | Phased implementation plan |
 | `PRODUCTION_READINESS.md` | Production deployment readiness assessment |
+| `ARCHITECTURE_REVIEW_OBSERVATIONS.md` | Architecture review findings |
+
+---
+
+## Appendix C: RBAC Permission Matrix Summary
+
+### C.1 Customer-Facing Permissions
+| Module | Permissions |
+|--------|-------------|
+| **Profile** | CUSTOMER_PROFILE_READ, CUSTOMER_PROFILE_WRITE |
+| **KYC** | KYC_DOCUMENT_UPLOAD, KYC_DOCUMENT_READ (own) |
+| **Accounts** | ACCOUNT_CREATE, ACCOUNT_READ (own), ACCOUNT_DEPOSIT, ACCOUNT_WITHDRAW, ACCOUNT_TRANSFER, ACCOUNT_STATEMENT (own), ACCOUNT_CLOSE (own) |
+| **Transfers** | TRANSFER_INITIATE, TRANSFER_HISTORY (own) |
+
+### C.2 KYC Officer Permissions
+| Module | Permissions |
+|--------|-------------|
+| **Customer** | CUSTOMER_PROFILE_READ_ALL (assigned cases) |
+| **KYC** | KYC_DOCUMENT_READ (assigned), KYC_CASE_REVIEW, KYC_CASE_RECOMMEND, KYC_CASE_REQUEST_INFO |
+| **Accounts** | ACCOUNT_READ (assigned), ACCOUNT_STATEMENT (assigned) |
+| **Transfers** | TRANSFER_HISTORY (assigned) |
+
+### C.3 KYC Manager Permissions
+| Module | Permissions |
+|--------|-------------|
+| **Customer** | CUSTOMER_PROFILE_READ_ALL (authorized cases) |
+| **KYC** | KYC_DOCUMENT_READ (authorized), KYC_CASE_ASSIGN, KYC_CASE_APPROVE, KYC_CASE_REJECT, KYC_CASE_RETURN, KYC_CASE_ESCALATE, KYC_AUDIT_READ |
+| **Accounts** | ACCOUNT_READ (authorized), ACCOUNT_STATEMENT (authorized) |
+| **Transfers** | TRANSFER_HISTORY (authorized) |
+
+### C.4 Staff Permissions (Support, Operations, Compliance)
+| Role | Key Permissions |
+|------|-----------------|
+| **SUPPORT_AGENT** | CUSTOMER_PROFILE_READ_ALL, KYC_DOCUMENT_READ (limited), ACCOUNT_READ, ACCOUNT_STATEMENT, TRANSFER_HISTORY |
+| **OPERATIONS_OFFICER** | CUSTOMER_PROFILE_READ_ALL, ACCOUNT_CREATE, ACCOUNT_READ, ACCOUNT_DEPOSIT, ACCOUNT_STATEMENT, TRANSFER_MONITOR, TRANSFER_HISTORY |
+| **COMPLIANCE_OFFICER** | CUSTOMER_PROFILE_READ_ALL, KYC_DOCUMENT_READ, KYC_AUDIT_READ, ACCOUNT_READ, ACCOUNT_STATEMENT, TRANSFER_MONITOR, TRANSFER_HISTORY, AUDIT_TRAIL_READ |
+
+### C.5 Admin Permissions
+| Module | Permissions |
+|--------|-------------|
+| **All** | All permissions including ADMIN_USER_MANAGE, ADMIN_ROLE_ASSIGN, ADMIN_CONFIG_MANAGE |
 
 ---
 
@@ -1694,6 +2118,7 @@ flowchart TD
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-17 | Architecture Team | Initial target state architecture documentation |
+| 2.0 | 2026-11-18 | Architecture Team | **Major Update**: Comprehensive RBAC model (9 roles, 25 permissions), KYC Maker-Checker workflow (13 states, separation of duties), New KYC Workflow Service, Updated security architecture, Updated service topology, Updated event model, Updated workflows |
 
 ---
 

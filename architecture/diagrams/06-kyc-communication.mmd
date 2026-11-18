@@ -1,0 +1,83 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+graph TB
+    subgraph CLIENTS ["Clients"]
+        CUST[Customer App]
+        OFF[Officer Portal]
+        MGR[Manager Portal]
+        COMP[Compliance Portal]
+    end
+
+    subgraph GATEWAY ["API Gateway"]
+        GW[Spring Cloud Gateway\nJWT + RBAC + Rate Limit]
+    end
+
+    subgraph SERVICES ["Microservices"]
+        KYC[KYC Workflow Service\nPort 8087]
+        USER[User Service\nPort 8082]
+        AUTH[Auth Service\nPort 8081]
+        NOTIF[Notification Service\nPort 8085]
+        ACC[Account Service\nPort 8083]
+        COMPLIANCE[Compliance Service\nPort 8088]
+    end
+
+    subgraph DATA ["Data Layer"]
+        DB_KYC[(citicore_kycdb\nCases, Assignments, History, Findings)]
+        DB_USER[(citicore_userdb\nProfiles, Documents)]
+        DB_AUTH[(citicore_authdb\nUsers, Roles)]
+        REDIS[(Redis Cache\nAssignments, Permissions, SLA)]
+        S3[(AWS S3 SSE-KMS\nKYC Documents)]
+        KAFKA[(Kafka Cluster\n3 Brokers, RF=3)]
+    end
+
+    subgraph AUDIT ["Audit & Monitoring"]
+        AUDIT_DB[(Audit Logs\nImmutable + Hash Chained)]
+        GRAF[Grafana Dashboards\nKYC KPIs, SLA, SoD]
+        ALERT[AlertManager\nSLA Breach, SoD Violation]
+    end
+
+    CUST --> GW
+    OFF --> GW
+    MGR --> GW
+    COMP --> GW
+
+    GW --> KYC
+    GW --> USER
+    GW --> AUTH
+
+    KYC --> DB_KYC
+    KYC --> REDIS
+    KYC --> KAFKA
+    KYC -.->|Feign| USER
+    KYC -.->|Feign| AUTH
+    KYC -.->|Feign| NOTIF
+
+    USER --> DB_USER
+    USER --> S3
+    USER --> KAFKA
+
+    AUTH --> DB_AUTH
+    AUTH --> KAFKA
+
+    NOTIF --> KAFKA
+
+    ACC -.->|Feign| KYC
+    ACC --> KAFKA
+
+    COMPLIANCE --> KAFKA
+    COMPLIANCE --> DB_KYC
+
+    KAFKA --> KYC
+    KAFKA --> NOTIF
+    KAFKA --> ACC
+    KAFKA --> COMPLIANCE
+
+    KYC -.->|Audit Events| AUDIT_DB
+    KYC -.->|Metrics| GRAF
+    KYC -.->|Alerts| ALERT
+
+    style KYC fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style DB_KYC fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style AUDIT_DB fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style KAFKA fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+```

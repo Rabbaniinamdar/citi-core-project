@@ -1,0 +1,61 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
+graph TB
+    subgraph SYNC ["Synchronous (Feign/REST)"]
+        CLIENT[Client] --> GW[API Gateway]
+        GW --> AUTH[Auth Service]
+        GW --> USER[User Service]
+        GW --> KYC[KYC Workflow Service]
+        GW --> ACC[Account Service]
+        GW --> TXN[Transaction Service]
+
+        TXN -.->|validateTransfer| ACC
+        ACC -.->|getKycStatus| KYC
+        ACC -.->|getProfile| USER
+        KYC -.->|getProfile| USER
+        KYC -.->|verifyRoles| AUTH
+    end
+
+    subgraph ASYNC ["Asynchronous (Kafka)"]
+        KAFKA[(Kafka Event Bus)]
+
+        AUTH -->|otp-verification-topic| KAFKA
+        AUTH -->|user-created-topic| KAFKA
+        USER -->|kyc-topic| KAFKA
+        USER -->|kyc-submission-topic| KAFKA
+        USER -->|kyc-document-topic| KAFKA
+
+        KYC -->|kyc-case-topic| KAFKA
+        KYC -->|kyc-notification-topic| KAFKA
+
+        ACC -->|account-events-topic| KAFKA
+        ACC -->|debit-success-topic| KAFKA
+        ACC -->|debit-failed-topic| KAFKA
+        ACC -->|credit-success-topic| KAFKA
+        ACC -->|credit-failed-topic| KAFKA
+        ACC -->|reversal-success-topic| KAFKA
+        ACC -->|balance-hold-topic| KAFKA
+
+        TXN -->|transfer-requested-topic| KAFKA
+
+        KAFKA -->|transfer-requested-topic| ACC
+        KAFKA -->|debit-success-topic| ACC
+        KAFKA -->|reversal-topic| ACC
+        KAFKA -->|kyc-case-topic| ACC
+
+        KAFKA -->|credit-success-topic| TXN
+        KAFKA -->|credit-failed-topic| TXN
+        KAFKA -->|reversal-success-topic| TXN
+
+        KAFKA -->|credit-success-topic| NOTIF[Notification Service]
+        KAFKA -->|credit-failed-topic| NOTIF
+        KAFKA -->|reversal-success-topic| NOTIF
+        KAFKA -->|kyc-topic| NOTIF
+        KAFKA -->|kyc-case-topic| NOTIF
+        KAFKA -->|kyc-notification-topic| NOTIF
+        KAFKA -->|otp-verification-topic| NOTIF
+
+        KAFKA -->|kyc-case-topic| COMPLIANCE[Compliance Service]
+        KAFKA -.->|Planned| LEDGER[Ledger Service]
+    end
+```

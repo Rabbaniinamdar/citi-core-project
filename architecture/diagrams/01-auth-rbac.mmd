@@ -1,0 +1,53 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '12px'}}}%%
+graph TB
+    subgraph IDP ["Identity Provider"]
+        AUTH[Auth Service<br/>Port 8081]
+        DB_AUTH[(citicore_authdb)]
+    end
+
+    subgraph RBAC_ENGINE ["RBAC Engine"]
+        ROLES[Role Definitions<br/>9 System Roles]
+        PERMS[Permission Catalog<br/>28 Granular Permissions]
+        MATRIX[Role-Permission Matrix]
+        EVALUATOR[PermissionEvaluator<br/>SpEL + ABAC]
+    end
+
+    subgraph ENFORCEMENT ["Authorization Enforcement Layers"]
+        GW[API Gateway<br/>JWT Validation + Coarse RBAC]
+        FILTER[JwtAuthenticationFilter<br/>Token Validation + SecurityContext]
+        ANNOTATION[@PreAuthorize<br/>Method-Level RBAC]
+        LOGIC[Service Logic<br/>Ownership + ABAC + SoD]
+        DATA[Repository Queries<br/>Row-Level Scoping]
+    end
+
+    subgraph CLAIMS ["JWT Claims"]
+        TOKEN[Access Token<br/>15min HS256]
+        REFRESH[Refresh Token<br/>7 days Opaque]
+        CLAIMS[Claims: sub, email, roles, permissions,<br/>kycStatus, riskScore, assignedCases, authorizedCases]
+    end
+
+    subgraph REVOCATION ["Revocation Strategy"]
+        CACHE[Redis Cache<br/>15min TTL + Invalidation]
+        BLOCKLIST[Emergency Blocklist<br/>Immediate]
+        REFRESH_REVOKE[Refresh Token Revocation<br/>Immediate]
+    end
+
+    AUTH --> DB_AUTH
+    AUTH --> TOKEN
+    AUTH --> REFRESH
+    TOKEN --> CLAIMS
+    ROLES --> MATRIX
+    PERMS --> MATRIX
+    MATRIX --> EVALUATOR
+    GW --> FILTER
+    FILTER --> ANNOTATION
+    ANNOTATION --> LOGIC
+    LOGIC --> DATA
+    EVALUATOR --> ANNOTATION
+    CLAIMS --> GW
+    CLAIMS --> FILTER
+    CACHE --> EVALUATOR
+    BLOCKLIST --> GW
+    REFRESH_REVOKE --> AUTH
+```

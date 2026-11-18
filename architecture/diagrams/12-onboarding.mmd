@@ -1,0 +1,56 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '9px'}}}%%
+flowchart TD
+    START([Customer Visits App]) --> REGISTER[POST /auth/register\n{email, password, phone}]
+    REGISTER --> VALIDATE{Valid Input?}
+    VALIDATE -->|No| ERROR1[Return 400]
+    VALIDATE -->|Yes| SAVE_USER[Save User (PENDING)]
+    SAVE_USER --> GEN_OTP[Generate 8-char OTP]
+    GEN_OTP --> SAVE_OTP[Save OTP (10min expiry)]
+    SAVE_OTP --> PUBLISH_OTP[Publish otp-verification-topic]
+    PUBLISH_OTP --> EMAIL_OTP[Notification: Send Email]
+    EMAIL_OTP --> RETURN[Return 201]
+    RETURN --> VERIFY_UI[Customer Enters OTP]
+    VERIFY_UI --> VERIFY_API[POST /auth/verify]
+    VERIFY_API --> CHECK_OTP{OTP Valid?}
+    CHECK_OTP -->|No| ERROR2[Return 400]
+    CHECK_OTP -->|Yes| ACTIVATE[User: ACTIVE, verified]
+    ACTIVATE --> ISSUE_TOKENS[Generate JWT + Refresh]
+    ISSUE_TOKENS --> RETURN_TOKENS[Return Tokens]
+    RETURN_TOKENS --> PROFILE[Complete Profile]
+    PROFILE --> KYC_UPLOAD[Upload KYC Docs]
+    KYC_UPLOAD --> KYC_SUBMIT[Submit KYC Application]
+    KYC_SUBMIT --> KYC_PENDING[KYC Status: SUBMITTED]
+    KYC_PENDING --> KYC_WF_CREATE[KYC Workflow: Create Case]
+    KYC_WF_CREATE --> AUTO_ASSIGN[Auto-assign to Officer]
+    AUTO_ASSIGN --> NOTIFY_OFFICER[Notify Officer]
+    NOTIFY_OFFICER --> OFFICER_REVIEW[Officer Reviews]
+    OFFICER_REVIEW --> REVIEW_ACTION{Officer Action}
+    REVIEW_ACTION -->|Request Info| REQUEST_INFO[Status: MORE_INFO_REQUIRED]
+    REQUEST_INFO --> CUSTOMER_RESPOND[Customer Provides Info]
+    CUSTOMER_RESPOND --> RESUBMITTED[Status: RESUBMITTED]
+    RESUBMITTED --> OFFICER_REVIEW
+    REVIEW_ACTION -->|Recommend Approve| RECOMMEND_APPROVE[Status: RECOMMENDED_APPROVAL]
+    REVIEW_ACTION -->|Recommend Reject| RECOMMEND_REJECT[Status: RECOMMENDED_REJECTION]
+    RECOMMEND_APPROVE --> MANAGER_REVIEW[Manager Reviews]
+    RECOMMEND_REJECT --> MANAGER_REVIEW
+    MANAGER_REVIEW --> MANAGER_ACTION{Manager Action}
+    MANAGER_ACTION -->|Approve| APPROVED[Status: APPROVED]
+    MANAGER_ACTION -->|Reject| REJECTED[Status: REJECTED]
+    MANAGER_ACTION -->|Return| RETURN_REVIEW[Status: UNDER_REVIEW]
+    MANAGER_ACTION -->|Escalate| ESCALATED[Status: ESCALATED]
+    RETURN_REVIEW --> OFFICER_REVIEW
+    ESCALATED --> COMPLIANCE_RESOLVE[Compliance Resolves]
+    COMPLIANCE_RESOLVE --> OFFICER_REVIEW
+    APPROVED --> KYC_APPROVED_EVENT[Publish KYC_APPROVED]
+    KYC_APPROVED_EVENT --> ACCOUNT_CREATE[Customer Creates Account]
+    REJECTED --> REAPPLY[Customer Can Reapply]
+    REAPPLY --> KYC_UPLOAD
+    ACCOUNT_CREATE --> KYC_CHECK[Feign KYC Status]
+    KYC_CHECK -->|Not Approved| ERROR3[Return 400: KYC Required]
+    KYC_CHECK -->|Approved| CREATE_ACC_DB[Create Account]
+    CREATE_ACC_DB --> PUBLISH_ACC[Publish ACCOUNT_CREATED]
+    PUBLISH_ACC --> LEDGER_POST[Ledger: Journal Entry]
+    LEDGER_POST --> SUCCESS[Account Created]
+    SUCCESS --> END([Onboarding Complete])
+```

@@ -1,0 +1,38 @@
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '11px'}}}%%
+graph TB
+    subgraph RBAC ["Role-Based Access Control"]
+        ROLES[Roles: CUSTOMER, KYC_OFFICER, KYC_MANAGER, SUPPORT_AGENT, OPERATIONS_OFFICER, COMPLIANCE_OFFICER, ADMIN, AUDITOR, SERVICE]
+        PERMISSIONS[Permissions: 28 granular permissions\n(See RBAC_ARCHITECTURE.md)]
+        ROLE_PERM[Role-Permission Mapping\n(See Section 4 Matrix)]
+    end
+
+    subgraph ABAC ["Attribute-Based Access Control"]
+        ATTRS[Attributes: userId, accountOwnership, kycCaseAssignment, kycCaseAuthorization, kycStatus, riskScore, caseScope]
+        POLICIES[Policies: Ownership, KYC Case Assignment, KYC Case Authorization, Separation of Duties, KYC Required, Daily Limits]
+    end
+
+    subgraph SOD ["Separation of Duties"]
+        SOD_ENGINE[SoD Enforcement Engine\nKYC Workflow Service]
+        SOD_RULES[Rules: Officer ≠ Manager for same case\nNo self-assignment\nCompliance independence]
+    end
+
+    subgraph ENFORCEMENT ["Enforcement Points"]
+        GATEWAY[API Gateway: JWT validation, RBAC coarse check, Rate limiting]
+        FILTER[JwtAuthenticationFilter: Token validation, SecurityContext, Permission extraction]
+        ANNOTATION[@PreAuthorize: Method-level RBAC + SpEL]
+        SERVICE[Service Logic: ABAC ownership checks, Business rules, SoD]
+        KYC_ENFORCE[KYC Workflow Engine: State machine, Maker-Checker enforcement, Case assignment]
+    end
+
+    ROLES --> PERMISSIONS
+    PERMISSIONS --> ROLE_PERM
+    ATTRS --> POLICIES
+    SOD_RULES --> SOD_ENGINE
+    GATEWAY --> FILTER
+    FILTER --> ANNOTATION
+    ANNOTATION --> SERVICE
+    SERVICE --> KYC_ENFORCE
+    SOD_ENGINE --> KYC_ENFORCE
+    POLICIES --> SERVICE
+```
