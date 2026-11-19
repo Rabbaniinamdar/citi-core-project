@@ -1,0 +1,61 @@
+# =============================================================================
+# config-server — STAGING / PRODUCTION
+#
+# Uses the Git backend to read the citicore-config repository.
+#
+# Credentials come from environment variables injected by the deployment
+# (K8s envFrom / Secrets Manager). They are never committed.
+#
+# clone-on-start: true + force-pull: true guarantee the server always serves
+# the latest committed configuration and fails fast if the repository is
+# unreachable.
+# =============================================================================
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  cloud:
+    config:
+      server:
+        git:
+          uri: ${CONFIG_GIT_URI}
+          username: ${CONFIG_GIT_USERNAME}
+          password: ${CONFIG_GIT_TOKEN}
+          default-label: ${CONFIG_GIT_LABEL:main}
+          clone-on-start: true
+          force-pull: true
+          timeout: 10
+          refresh-rate: 30000
+          http-connection-timeout: 10000
+          http-read-timeout: 60000
+        health:
+          enabled: true
+
+    bus:
+      enabled: true
+
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,busrefresh
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  metrics:
+    enable:
+      all: true
+
+logging:
+  level:
+    root: INFO
+    org.springframework.cloud.config: INFO
+    com.citicore.gateway: INFO

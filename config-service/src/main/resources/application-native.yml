@@ -1,0 +1,38 @@
+# =============================================================================
+# config-server — LOCAL DEVELOPMENT
+#
+# Local profile uses the NATIVE filesystem backend so developers can run the
+# Config Server without a Git remote. The native search location points at the
+# local checkout of the configuration repository.
+#
+# This profile must NOT require AWS, a Git remote, or Secrets Manager.
+# =============================================================================
+spring:
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: file:///C:/Users/nitis/OneDrive/Desktop/CitiCoreProject/citicore-config
+
+    bus:
+      enabled: true
+
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS:localhost:29092}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,busrefresh
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    org.springframework.cloud.config: DEBUG
+    com.citicore.gateway: DEBUG
