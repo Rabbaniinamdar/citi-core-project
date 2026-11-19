@@ -144,8 +144,8 @@ CitiCoreProject/
 │   └── documentation.md                   # (from API_DOCUMENTATION.md)
 ├── archive/
 │   └── PROJECT_ARCHITECTURE_v1.md         # Archived original architecture
-├── config-repo/                           # Keep
-├── config-repo-local/                     # Keep
+├── config-repo/                           # DEPRECATED — see citicore-config/
+├── config-repo-local/                     # DEPRECATED — see citicore-config/
 ├── config-service/                        # Keep
 ├── eureka-server/                         # Keep
 ├── auth-service/                          # Keep
@@ -328,8 +328,8 @@ CitiCoreProject/
 │   └── documentation.md                   # (from API_DOCUMENTATION.md)
 ├── archive/
 │   └── PROJECT_ARCHITECTURE_v1.md         # Archived original architecture
-├── config-repo/                           # Keep
-├── config-repo-local/                     # Keep
+├── config-repo/                           # DEPRECATED — see citicore-config/
+├── config-repo-local/                     # DEPRECATED — see citicore-config/
 ├── config-service/                        # Keep
 ├── eureka-server/                         # Keep
 ├── auth-service/                          # Keep

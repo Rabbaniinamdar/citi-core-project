@@ -262,7 +262,7 @@ Enable developers to run the complete CitiCore platform locally with zero extern
 |--------|---------------|
 | **Engine** | Spring Cloud Config Server (native profile) |
 | **Deployment** | Single container `citicore-config-server` |
-| **Config Source** | Local filesystem mount `./config-repo-local:/config-repo:ro` |
+| **Config Source** | Local filesystem mount `./citicore-config:/citicore-config:ro` |
 | **Port** | 8888 |
 | **Refresh** | Spring Cloud Bus via local Kafka |
 
@@ -822,7 +822,7 @@ graph TB
         subgraph LOCAL_DEL ["Local"]
             ENV_LOCAL[.env.local file<br/>gitignored]
             DOCKER_SECRETS[Docker Compose Secrets<br/>/run/secrets/]
-            CONFIG_LOCAL[Config Server (native)<br/>file:///config-repo]
+            CONFIG_LOCAL[Config Server (native)<br/>file:///citicore-config]
         end
 
         subgraph CI_DEL ["CI"]
@@ -900,7 +900,7 @@ graph TB
 
 | Aspect | Decision |
 |--------|----------|
-| **Local/Dev** | Native profile (file:///config-repo) |
+| **Local/Dev** | Native profile (file:///citicore-config) |
 | **CI/Test** | Native profile (test configs in repo) |
 | **Staging** | Git backend (staging branch) |
 | **Production** | Git backend (main branch; protected) |
@@ -1105,7 +1105,7 @@ graph TB
 
         subgraph PLATFORM ["Platform Services"]
             EUREKA[Eureka Server<br/>Port 8761]
-            CONFIG[Config Server<br/>Port 8888<br/>Mount: ./config-repo-local]
+            CONFIG[Config Server<br/>Port 8888<br/>Mount: ./citicore-config]
         end
 
         subgraph MICROSERVICES ["Business Services"]

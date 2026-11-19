@@ -142,32 +142,27 @@ src/main/resources/
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1e3a8a', 'fontSize': '10px'}}}%%
 graph TB
     subgraph CONFIG_SERVER ["Spring Cloud Config Server"]
-        LOCAL_MODE[Local Profile<br/>Native: file:///config-repo]
-        TEST_MODE[Test Profile<br/>Native: file:///config-repo-test]
-        STAGING_MODE[Staging Profile<br/>Git Backend: staging branch]
-        PROD_MODE[Prod Profile<br/>Git Backend: main branch]
+        NATIVE_MODE[Native Profile<br/>file:///citicore-config]
+        GIT_MODE[Git Profile<br/>Git Backend: main branch]
     end
     
     subgraph CONFIG_REPOS ["Configuration Repositories"]
-        LOCAL_REPO[config-repo-local/<br/>application.yml<br/>application-local.yml<br/>...]
-        TEST_REPO[config-repo-test/<br/>application.yml<br/>application-test.yml<br/>...]
-        GIT_REPO[Git Repository<br/>main branch (prod)<br/>staging branch (staging)]
+        CITICORE_REPO[citicore-config/<br/>application.yml<br/>application-local.yml<br/>...]
+        GIT_REPO[Git Repository<br/>main branch (prod/staging/local/test)]
     end
     
     subgraph CLIENTS ["Client Services"]
         AUTH[Auth Service]
         USER[User Service]
-        KYC[KYC Workflow]
         ACC[Account Service]
         TXN[Transaction Service]
         NOTIF[Notification Service]
         GATEWAY[API Gateway]
+        EUREKA[Eureka Server]
     end
     
-    LOCAL_MODE --> LOCAL_REPO
-    TEST_MODE --> TEST_REPO
-    STAGING_MODE --> GIT_REPO
-    PROD_MODE --> GIT_REPO
+    NATIVE_MODE --> CITICORE_REPO
+    GIT_MODE --> GIT_REPO
     
     CONFIG_SERVER -->|HTTP| CLIENTS
     CLIENTS -->|Spring Cloud Bus| KAFKA[Kafka: Config Refresh]
@@ -178,13 +173,13 @@ graph TB
 #### Local/Development (Native Profile)
 
 ```yaml
-# config-server/src/main/resources/application-local.yml
+# config-server/src/main/resources/application-native.yml
 spring:
   cloud:
     config:
       server:
         native:
-          search-locations: file:/config-repo
+          search-locations: ${CONFIG_NATIVE_SEARCH_LOCATIONS:file:///citicore-config}
   profiles:
     active: native
 ```

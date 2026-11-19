@@ -222,7 +222,7 @@ services:
       # Use LOCAL config repository instead of AWS/Git
       SPRING_PROFILES_ACTIVE: native
 
-      SPRING_CLOUD_CONFIG_SERVER_NATIVE_SEARCH_LOCATIONS: file:/config-repo
+      SPRING_CLOUD_CONFIG_SERVER_NATIVE_SEARCH_LOCATIONS: file:/citicore-config
 
       # Spring Cloud Bus Kafka
       KAFKA_BROKERS: kafka:9092
@@ -230,7 +230,7 @@ services:
       SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS: kafka:9092
 
     volumes:
-      - ./config-repo-local:/config-repo:ro
+      - ./citicore-config:/citicore-config:ro
 
     depends_on:
       kafka:
