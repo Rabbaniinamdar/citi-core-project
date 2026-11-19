@@ -1,3 +1,21 @@
 spring:
   application:
     name: auth-service
+
+  config:
+    # Config Data import — resolves configuration from the Config Server.
+    # The URL is injected by the deployment environment:
+    #   local/IDE:  CONFIG_SERVER_URL=http://localhost:8888
+    #   Docker:    CONFIG_SERVER_URL=http://config-server:8888
+    #   staging/prod: CONFIG_SERVER_URL=<config-server DNS>
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+
+  cloud:
+    config:
+      # Fail fast in production: do not silently start with incomplete config.
+      fail-fast: true
+      retry:
+        initial-interval: 1000
+        max-attempts: 6
+        multiplier: 1.5
+        max-interval: 5000

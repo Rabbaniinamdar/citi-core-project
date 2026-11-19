@@ -3,5 +3,4 @@ spring:
     activate:
       on-profile: prod
 
-    import: optional:configserver:http://citicore-config-alb-1654378622.ap-south-1.elb.amazonaws.com
-
+    import: "configserver:${CONFIG_SERVER_URL}"

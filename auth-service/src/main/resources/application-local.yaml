@@ -3,4 +3,5 @@ spring:
     activate:
       on-profile: local
 
-    import: optional:configserver:http://localhost:8888
+    # Local Config Server URL — overridden by CONFIG_SERVER_URL env var.
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
