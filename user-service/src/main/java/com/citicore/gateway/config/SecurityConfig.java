@@ -24,9 +24,13 @@ public class SecurityConfig {
 
         http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/accounts/**").permitAll()
-                        .requestMatchers("/h2-console/**").permitAll()  // Public H2 console
-                        .requestMatchers("/actuator/**").permitAll() // or authenticated
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
+                        .requestMatchers("/h2-console/**").permitAll()
+                        .requestMatchers("/api/v1/users/profile").authenticated()
+                        .requestMatchers("/api/v1/users/profile/**").authenticated()
+                        .requestMatchers("/api/v1/users/kyc/**").authenticated()
+                        .requestMatchers("/api/v1/users/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers

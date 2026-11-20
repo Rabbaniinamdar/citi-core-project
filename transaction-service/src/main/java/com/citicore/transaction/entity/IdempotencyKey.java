@@ -9,9 +9,13 @@ import java.time.LocalDateTime;
         name = "idempotency_keys",
         uniqueConstraints = {
                 @UniqueConstraint(
-                        name = "uk_idempotency_key",
-                        columnNames = "idempotency_key"
+                        name = "uk_idempotency_key_user",
+                        columnNames = {"auth_user_id", "idempotency_key"}
                 )
+        },
+        indexes = {
+                @Index(name = "idx_idempotency_key", columnList = "idempotency_key"),
+                @Index(name = "idx_idempotency_user", columnList = "auth_user_id")
         }
 )
 public class IdempotencyKey {
@@ -19,6 +23,12 @@ public class IdempotencyKey {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(
+            name = "auth_user_id",
+            nullable = false
+    )
+    private Long authUserId;
 
     @Column(
             name = "idempotency_key",
@@ -42,6 +52,14 @@ public class IdempotencyKey {
 
     public Long getId() {
         return id;
+    }
+
+    public Long getAuthUserId() {
+        return authUserId;
+    }
+
+    public void setAuthUserId(Long authUserId) {
+        this.authUserId = authUserId;
     }
 
     public String getIdempotencyKey() {

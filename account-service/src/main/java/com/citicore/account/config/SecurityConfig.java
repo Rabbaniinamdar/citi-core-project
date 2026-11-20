@@ -24,13 +24,20 @@ public class SecurityConfig {
 
         http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/accounts/**").permitAll()
-                        .requestMatchers("/h2-console/**").permitAll()  // Public H2 console
-                        .requestMatchers("/actuator/**").permitAll() // or authenticated
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
+                        .requestMatchers("/h2-console/**").permitAll()
+                        .requestMatchers("/accounts/create").authenticated()
+                        .requestMatchers("/accounts/deposit").authenticated()
+                        .requestMatchers("/accounts/withdraw").authenticated()
+                        .requestMatchers("/accounts/balance/**").authenticated()
+                        .requestMatchers("/accounts/mini-statement/**").authenticated()
+                        .requestMatchers("/accounts/statement/**").authenticated()
+                        .requestMatchers("/accounts/my-accounts").authenticated()
+                        .requestMatchers("/accounts/validate-transfer").hasRole("SERVICE")
                         .anyRequest().authenticated()
                 )
                 .headers(headers -> headers
-                        // Allow inline scripts and styles for the H2 Console (Not recommended for production)
                         .contentSecurityPolicy(csp -> csp
                                 .policyDirectives("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self';")
                         )

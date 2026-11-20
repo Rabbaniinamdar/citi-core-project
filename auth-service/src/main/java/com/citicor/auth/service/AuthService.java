@@ -11,6 +11,8 @@ import com.citicor.auth.repository.RoleRepository;
 import com.citicor.auth.repository.UserRepository;
 import com.citicor.auth.security.JwtUtils;
 import com.citicore.events.otp.VerificationOtpEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -25,12 +27,16 @@ import java.util.UUID;
 @Service
 public class AuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+    private static final String VERIFICATION_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
     private final UserRepository userRepo;
     private final RoleRepository roleRepo;
     private final PasswordEncoder encoder;
     private final JwtUtils jwtUtils;
     private final RefreshTokenRepository refreshTokenRepo;
     private final OtpEventPublisher otpEventPublisher;
+    private final SecureRandom secureRandom;
 
     public AuthService(UserRepository userRepo, RoleRepository roleRepo, PasswordEncoder encoder, JwtUtils jwtUtils, RefreshTokenRepository refreshTokenRepo , OtpEventPublisher otpEventPublisher) {
         this.userRepo = userRepo;
@@ -39,6 +45,7 @@ public class AuthService {
         this.jwtUtils = jwtUtils;
         this.refreshTokenRepo = refreshTokenRepo;
         this.otpEventPublisher = otpEventPublisher;
+        this.secureRandom = new SecureRandom();
     }
 
     @Value("${jwt.refresh-token-expiration}")
@@ -65,19 +72,17 @@ public class AuthService {
 //        sendVerificationEmail(user);
 //    }
     public void register(RegisterRequest req) {
+        log.info("Register start for email: {}", req.getEmail());
 
-        System.out.println("========== REGISTER START ==========");
-
-        System.out.println("Checking email...");
         if (userRepo.findByEmail(req.getEmail()).isPresent()) {
-            System.out.println("Email already exists");
+            log.warn("Registration attempt with existing email: {}", req.getEmail());
             throw new AuthException(
                     "Email already registered",
                     HttpStatus.CONFLICT
             );
         }
 
-        System.out.println("Encoding password...");
+        log.debug("Encoding password for new user: {}", req.getEmail());
         User user = new User();
 
         user.setEmail(req.getEmail());
@@ -85,13 +90,10 @@ public class AuthService {
         user.setEmailVerified(false);
         user.setStatus(UserStatus.PENDING);
 
-        System.out.println("Generating verification code...");
         user.setVerificationCode(generateVerificationCode());
         user.setVerificationCodeExpiresAt(
                 LocalDateTime.now().plusMinutes(15)
         );
-
-        System.out.println("Finding ROLE_CUSTOMER...");
 
         Role role = roleRepo.findByName("ROLE_CUSTOMER")
                 .orElseThrow(() ->
@@ -103,21 +105,13 @@ public class AuthService {
 
         user.getRoles().add(role);
 
-        System.out.println("Saving user...");
-
         userRepo.save(user);
 
-        System.out.println(
-                "USER SAVED. ID = " + user.getId()
-        );
-
-        System.out.println("Publishing OTP event...");
+        log.info("User saved with ID: {}", user.getId());
 
         sendVerificationEmail(user);
 
-        System.out.println("OTP EVENT PUBLISHED");
-
-        System.out.println("========== REGISTER END ==========");
+        log.info("OTP event published for user ID: {}", user.getId());
     }
     public AuthResponse login(LoginRequest req) {
         User user = userRepo.findByEmail(req.getEmail())
@@ -231,9 +225,12 @@ public class AuthService {
             throw new AuthException("User not found", HttpStatus.NOT_FOUND);        }
     }
     private String generateVerificationCode() {
-        SecureRandom random = new SecureRandom();
-        int code = random.nextInt(900000) + 100000;
-        return String.valueOf(code);
+        // 8-char alphanumeric = 36^8 ≈ 2.8 trillion combinations (vs 900K for 6-digit)
+        StringBuilder sb = new StringBuilder(8);
+        for (int i = 0; i < 8; i++) {
+            sb.append(VERIFICATION_CHARS.charAt(secureRandom.nextInt(VERIFICATION_CHARS.length())));
+        }
+        return sb.toString();
     }
 
 }

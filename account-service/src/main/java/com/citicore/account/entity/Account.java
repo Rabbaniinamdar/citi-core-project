@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
                 @Index(name = "idx_accounts_user", columnList = "authUserId"),
                 @Index(name = "idx_accounts_number", columnList = "accountNumber")
         })
+@org.hibernate.annotations.Check(name = "chk_balance_non_negative", constraints = "balance >= 0")
 public class Account {
 
     public Account() {

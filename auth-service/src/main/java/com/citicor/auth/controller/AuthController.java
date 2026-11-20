@@ -3,6 +3,7 @@ package com.citicor.auth.controller;
 import com.citicor.auth.dto.*;
 import com.citicor.auth.exception.AuthException;
 import com.citicor.auth.service.AuthService;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import jakarta.validation.Valid;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +20,7 @@ public class AuthController {
         this.service = service;
     }
 
+    @RateLimiter(name = "register", fallbackMethod = "rateLimitFallback")
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req) {
         try {
@@ -29,9 +31,32 @@ public class AuthController {
         }
     }
 
+    @RateLimiter(name = "login", fallbackMethod = "rateLimitFallback")
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest req) {
         return ResponseEntity.ok(service.login(req));
+    }
+
+    @RateLimiter(name = "verify", fallbackMethod = "rateLimitFallback")
+    @PostMapping("/verify")
+    public ResponseEntity<?> verifyUser(@RequestBody VerifyUser verifyUserDto) {
+        try {
+            service.verifyUser(verifyUserDto);
+            return ResponseEntity.ok("Account verified successfully");
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @RateLimiter(name = "resend", fallbackMethod = "rateLimitFallback")
+    @PostMapping("/resend")
+    public ResponseEntity<?> resendVerificationCode(@RequestParam String email) {
+        try {
+            service.resendVerificationCode(email);
+            return ResponseEntity.ok("Verification code sent");
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
     @PostMapping("/refresh-token")
@@ -44,23 +69,8 @@ public class AuthController {
         service.logout(req.getRefreshToken());
         return ResponseEntity.ok("Logged out successfully");
     }
-    @PostMapping("/verify")
-    public ResponseEntity<?> verifyUser(@RequestBody VerifyUser verifyUserDto) {
-        try {
-            service.verifyUser(verifyUserDto);
-            return ResponseEntity.ok("Account verified successfully");
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
 
-    @PostMapping("/resend")
-    public ResponseEntity<?> resendVerificationCode(@RequestParam String email) {
-        try {
-            service.resendVerificationCode(email);
-            return ResponseEntity.ok("Verification code sent");
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+    private ResponseEntity<?> rateLimitFallback(String method, Throwable ex) {
+        return ResponseEntity.status(429).body("Too many requests. Please try again later.");
     }
 }

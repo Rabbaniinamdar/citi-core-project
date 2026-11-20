@@ -86,9 +86,10 @@ public class TransactionService {
             );
         }
 
+        AuthUser authUser = getAuthUser();
         Optional<IdempotencyKey> existing =
                 idempotencyKeyRepository
-                        .findByIdempotencyKey(idempotencyKey);
+                        .findByAuthUserIdAndIdempotencyKey(authUser.getId(), idempotencyKey);
 
         if (existing.isPresent()) {
 
@@ -99,7 +100,6 @@ public class TransactionService {
         }
 
         // ── Step 2: Daily total for limit check ───────────────────────────────
-        AuthUser authUser = getAuthUser();
         LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
         LocalDateTime endOfDay   = startOfDay.plusDays(1);
 
@@ -141,6 +141,7 @@ public class TransactionService {
 
         IdempotencyKey key = new IdempotencyKey();
 
+        key.setAuthUserId(authUser.getId());
         key.setIdempotencyKey(idempotencyKey);
         key.setTxnRef(txnRef);
         key.setStatus("INITIATED");
