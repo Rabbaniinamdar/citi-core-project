@@ -46,7 +46,7 @@ This register tracks all known technical debt items in the CitiCore Banking Plat
 | ID | Title | Description | Impact | Sprint | Owner |
 |------|-------|-------------|--------|--------|-------|
 | TD-017 | No password reset flow | Users cannot recover accounts | HIGH | Sprint 1 | Backend Lead |
-| TD-018 | No TOTP MFA support | Single factor only - phishing vulnerable | HIGH | Sprint 1 | Backend Lead |
+| TD-018 | No Email OTP MFA support | Single factor only - phishing vulnerable | HIGH | Sprint 1 | Backend Lead |
 | TD-015 | No password policy enforcement | Weak passwords accepted | HIGH | Sprint 1 | Backend Lead |
 | TD-016 | No account lockout | Unlimited password guessing | HIGH | Sprint 1 | Backend Lead |
 | TD-017 | Saga: Choreography vs Orchestration ambiguity | Transaction Service acts as orchestrator but docs say choreography | HIGH - Confusion in failure handling | Sprint 1 | Architect |

@@ -44,7 +44,7 @@ This register tracks all Architecture Decision Records (ADRs) for the CitiCore B
 - **DEC-010**: Document Malware Scanning — ClamAV with abstraction
 - **DEC-012**: Secrets Management — AWS Secrets Manager
 - **DEC-006**: JWT Claims Size — Permissions in token
-- **DEC-009**: MFA Methods — TOTP primary, Email fallback
+- **DEC-009**: MFA Methods — Email OTP primary
 
 ### Services & Integration
 - **DEC-003**: KYC Service Ownership — Dedicated KYC Workflow Service

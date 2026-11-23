@@ -1,4 +1,4 @@
-package com.citicore.gateway.entity;
+package com.citicore.transaction.entity;
 
 import jakarta.persistence.EntityListeners;
 import jakarta.persistence.MappedSuperclass;

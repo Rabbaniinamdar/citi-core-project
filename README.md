@@ -123,7 +123,7 @@ All 15 ADRs are approved and documented in [decisions/adrs/](decisions/adrs/):
 | DEC-006 | JWT claims include permissions (15min expiry) |
 | DEC-007 | Separate Ledger Service microservice |
 | DEC-008 | Compliance Service with vendor abstraction |
-| DEC-009 | TOTP primary, Email OTP fallback |
+| DEC-009 | Email OTP primary |
 | DEC-010 | ClamAV via S3 Object Lambda for malware scanning |
 | DEC-011 | RDS KMS storage encryption + app-level envelope encryption |
 | DEC-012 | AWS Secrets Manager with IRSA |

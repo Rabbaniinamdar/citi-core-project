@@ -145,7 +145,7 @@ curl -X POST http://localhost:8080/api/v1/auth/verify \
   -H "Content-Type: application/json" \
   -d '{"email":"dev@test.com","code":"123456"}'
 
-# 3. Login
+# 3. Login (without MFA enabled)
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"dev@test.com","password":"SecurePass123!"}' | jq -r .accessToken)
@@ -156,12 +156,30 @@ curl -X POST http://localhost:8080/api/v1/users/profile \
   -H "Content-Type: application/json" \
   -d '{"firstName":"Dev","lastName":"User","phoneNumber":"+15551234567","address":"123 Dev St"}'
 
-# 5. Upload KYC documents (use sample files in ./test-data/kyc/)
-# 6. Submit KYC for review
-# 7. As KYC Officer: review and recommend
-# 8. As KYC Manager: approve
-# 9. Create account
-# 10. Transfer funds
+# 5. Enable Email OTP MFA (optional)
+curl -X POST http://localhost:8080/api/v1/auth/mfa/enable \
+  -H "Authorization: Bearer $TOKEN"
+
+# 6. Login with MFA (after enabling MFA)
+# First login returns challenge
+LOGIN_RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"dev@test.com","password":"SecurePass123!"}')
+
+# Extract challengeId from response
+CHALLENGE_ID=$(echo $LOGIN_RESPONSE | jq -r .challengeId)
+
+# Check Mailpit at http://localhost:8025 for 6-digit OTP, then verify
+curl -X POST http://localhost:8080/api/v1/auth/mfa/verify-challenge \
+  -H "Content-Type: application/json" \
+  -d "{\"challengeId\":\"$CHALLENGE_ID\",\"otpCode\":\"123456\"}"
+
+# 7. Upload KYC documents (use sample files in ./test-data/kyc/)
+# 8. Submit KYC for review
+# 9. As KYC Officer: review and recommend
+# 10. As KYC Manager: approve
+# 11. Create account
+# 12. Transfer funds
 ```
 
 ---
@@ -798,7 +816,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
 #### Auth Service
 - **JWT_SECRET too short**: Must be ≥ 32 characters
 - **BCrypt cost too high**: Reduce for local testing
-- **MFA not working**: Check TOTP time sync
+- **MFA not working**: Check email delivery (Mailpit at http://localhost:8025) and OTP expiry (5 min)
 
 #### User Service
 - **S3 upload fails**: Verify MinIO credentials and bucket existence

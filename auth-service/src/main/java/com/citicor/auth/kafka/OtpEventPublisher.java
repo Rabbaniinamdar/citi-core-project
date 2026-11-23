@@ -27,4 +27,24 @@ public class OtpEventPublisher {
                 event
         );
     }
+
+    public void publishLoginMfaOtp(
+            Long userId,
+            String email,
+            String otpCode,
+            int expiryMinutes
+    ) {
+        VerificationOtpEvent event = VerificationOtpEvent.builder()
+                .userId(userId)
+                .email(email)
+                .verificationCode(otpCode)
+                .expiryMinutes(expiryMinutes)
+                .build();
+
+        kafkaTemplate.send(
+                OTP_TOPIC,
+                userId.toString(),
+                event
+        );
+    }
 }

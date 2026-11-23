@@ -26,7 +26,7 @@ flowchart TB
         JWT_ACCESS[Access Token\nJWT HS256, 15 min\nClaims: userId, email, roles]
         JWT_REFRESH[Refresh Token\nOpaque UUID, 7 days\nStored in DB, Rotated]
         BCRYPT[BCrypt Hashing\nCost Factor 10]
-        MFA[TOTP MFA (Planned)\nRFC 6238 + Backup Codes]
+        MFA[Email OTP MFA\n6-digit, 5-min expiry\n3 max attempts, BCrypt hashed]
         LOCKOUT[Account Lockout (Planned)\n5 Failed → 15 min Lock]
         RATE_AUTH[Auth Rate Limiting (Planned)\n5 req/min login\n3 req/5min register]
         PWD_RESET[Password Reset (Planned)\nSecure Token, 15 min, Single-Use]

@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +46,8 @@ import java.util.concurrent.TimeUnit;
  */
 @Service
 public class AccountService {
+
+    private static final Logger log = LoggerFactory.getLogger(AccountService.class);
 
     private final AccountRepository           accountRepository;
     private final AccountStatementRepository  statementRepository;
@@ -261,22 +265,59 @@ public class AccountService {
                 accNo, "account-events-topic");
     }
 
-    // NOTE: same lock method as debit() — this is the critical fix.
-    // Ownership check is intentionally NOT added here — see deposit() below
-    // for where that decision needs to be made.
+    /**
+     * Credit an account with the given amount.
+     *
+     * This method handles different credit scenarios:
+     * 1. CUSTOMER DEPOSIT: Customer-initiated deposit/transfer received - requires ownership check
+     * 2. SAGA CREDIT: Internal saga-driven credit (e.g., transfer from another account) - no ownership check needed
+     * 3. ADMIN/OPERATIONS: Administrative credit adjustments - requires appropriate role
+     *
+     * The distinction is made via the email parameter:
+     * - Empty email + non-null authUserId = SAGA CREDIT (internal transfer from sender)
+     * - Non-empty email = CUSTOMER DEPOSIT (requires ownership check)
+     *
+     * @param accNo       Account number to credit
+     * @param amount      Amount to credit
+     * @param txnRef      Unique transaction reference for idempotency
+     * @param authUserId  Authenticated user ID (sender for saga credits, account holder for deposits)
+     * @param email       Empty for saga credits, customer email for deposits
+     */
     @Transactional
     public void credit(String accNo, BigDecimal amount, String txnRef,
                        Long authUserId, String email) {
         validateAmount(amount);
 
         if (statementRepository.existsByTxnRef(txnRef)) {
-            System.out.println("⚠️ [CREDIT] Duplicate txnRef=" + txnRef + " — skipping");
+            log.warn("[CREDIT] Duplicate txnRef={} — skipping", txnRef);
             return;
         }
 
         Account account = accountRepository
-                .findByAccountNumberWithLock(accNo)   // <-- was findByAccountNumber (no lock)
+                .findByAccountNumberWithLock(accNo)
                 .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accNo));
+
+        // Determine credit type and enforce appropriate authorization
+        boolean isSagaCredit = (email == null || email.isEmpty()) && authUserId != null;
+        boolean isCustomerDeposit = email != null && !email.isEmpty();
+
+        if (isCustomerDeposit) {
+            // Customer-initiated deposit: require ownership
+            if (!account.getAuthUserId().equals(authUserId)) {
+                log.warn("Unauthorized deposit attempt: account {} does not belong to user {}", accNo, authUserId);
+                throw new UnauthorizedAccountAccessException(
+                        "Unauthorized: account does not belong to user " + authUserId);
+            }
+        } else if (isSagaCredit) {
+            // Saga credit: authUserId is the SENDER's ID (who initiated the transfer)
+            // No ownership check needed - saga already validated the sender's balance
+            log.debug("[CREDIT] Saga credit for txnRef={}, senderId={}, receiverAcc={}",
+                    txnRef, authUserId, accNo);
+        } else {
+            // Admin/operational credit - would require additional role checks
+            log.warn("[CREDIT] Admin/operational credit for accNo={}, authUserId={}", accNo, authUserId);
+            // TODO: Add role-based authorization for admin credits
+        }
 
         BigDecimal newBalance = account.getBalance().add(amount);
         account.setBalance(newBalance);
@@ -291,7 +332,7 @@ public class AccountService {
                 .transactionType(TransactionType.CREDIT)
                 .amount(amount)
                 .balanceAfterTxn(newBalance)
-                .description("Credit Transaction")
+                .description(isCustomerDeposit ? "Deposit" : "Credit Received")
                 .build());
 
         saveToOutbox(new AccountEvent(

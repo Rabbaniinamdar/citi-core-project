@@ -1,7 +1,7 @@
-# ADR-009: MFA Methods — TOTP Primary, Email OTP Fallback
+# ADR-009: MFA Methods — Email OTP Primary
 
 ## Status
-✅ **APPROVED** (2026-11-18)
+✅ **APPROVED** (2026-11-23) — *Updated from TOTP to Email OTP*
 
 ## Context
 
@@ -9,31 +9,20 @@ The CitiCore platform requires Multi-Factor Authentication (MFA) for enhanced se
 
 **Requirements:**
 - Strong second factor for staff roles (regulatory requirement)
-- Customer-friendly fallback for broader accessibility
-- Support for account recovery if primary MFA method lost
+- Customer-friendly method for broader accessibility
+- Support for account recovery if MFA method lost
 - Compliance with RBI/PCI-DSS guidelines
+- Simplified user experience — no authenticator app required
 
 ## Decision
 
-**Use TOTP (RFC 6238) as primary MFA method with Email OTP as fallback.**
+**Use Email OTP as the primary (and only) MFA method.**
 
 ### MFA Methods
 
 | Method | Role | Type | Description |
 |--------|------|------|-------------|
-| **TOTP (RFC 6238)** | Primary | Authenticator App | Google Authenticator, Microsoft Authenticator, Authy compatible |
-| **Email OTP** | Fallback | Email | 8-char alphanumeric code, 10-min expiry |
-| **Backup Codes** | Recovery | One-time codes | 10 codes generated at enrollment, single-use |
-
-### Supported Authenticator Apps
-
-| App | Platform | Notes |
-|-----|----------|-------|
-| Google Authenticator | iOS, Android | Most common |
-| Microsoft Authenticator | iOS, Android | Cloud backup option |
-| Authy | iOS, Android, Desktop | Multi-device sync |
-| 1Password | iOS, Android, Desktop, Browser | Password manager integration |
-| Bitwarden | iOS, Android, Desktop, Browser | Open source |
+| **Email OTP** | Primary | Email | 6-digit numeric code, 5-min expiry, 3 max attempts |
 
 ### Enrollment Flow
 
@@ -43,20 +32,14 @@ sequenceDiagram
     participant GW as API Gateway
     participant AUTH as Auth Service
     participant DB as Database
+    participant NOTIF as Notification Service
     
-    User->>GW: POST /api/v1/auth/mfa/enroll
+    User->>GW: POST /api/v1/auth/mfa/enable
     GW->>AUTH: Forward (JWT validated)
-    AUTH->>AUTH: Generate TOTP secret (Base32)
-    AUTH->>DB: Save TOTP secret (encrypted)
-    AUTH-->>GW: Return QR Code URI + Backup Codes
-    GW-->>Client: Display QR Code + Backup Codes
-    User->>App: Scan QR Code with Authenticator App
-    User->>GW: POST /api/v1/auth/mfa/verify {code, method: TOTP}
-    GW->>AUTH: Forward
-    AUTH->>AUTH: Verify TOTP (RFC 6238)
-    AUTH->>DB: Update user: mfaEnabled=true, mfaMethod=TOTP
+    AUTH->>DB: Update user: mfaEnabled=true, mfaMethod=EMAIL_OTP
     AUTH-->>GW: Success
-    GW-->>Client: MFA Enabled
+    GW-->>Client: Email OTP MFA Enabled
+    Note over User: Uses verified email on file
 ```
 
 ### Authentication Flow (with MFA)
@@ -68,6 +51,7 @@ sequenceDiagram
     participant GW as API Gateway
     participant AUTH as Auth Service
     participant DB as Auth DB
+    participant NOTIF as Notification Service
 
     User->>Client: Enter credentials
     Client->>GW: POST /api/v1/auth/login {email, password}
@@ -77,19 +61,27 @@ sequenceDiagram
     AUTH->>AUTH: Verify password (BCrypt)
     alt Valid Credentials
         AUTH->>DB: Check MFA enabled?
-        alt MFA Enabled
-            AUTH->>DB: INSERT LoginAttempt (pending MFA)
-            AUTH-->>GW: 200 OK {mfaRequired: true, mfaMethods: ["TOTP", "EMAIL"]}
-            GW-->>Client: 200 OK {mfaRequired: true}
-            Client->>User: Prompt for MFA code
-            User->>Client: Enter TOTP/Email OTP
-            Client->>GW: POST /api/v1/auth/mfa/verify {code, method}
+        alt MFA Enabled (EMAIL_OTP)
+            AUTH->>DB: INSERT LoginChallenge (otp_hash, expires_at, max_attempts=3)
+            AUTH->>NOTIF: Publish OTP event (Kafka)
+            NOTIF->>User: Send 6-digit OTP via email
+            AUTH-->>GW: 200 OK {mfaRequired: true, challengeId, mfaMethods: ["EMAIL_OTP"]}
+            GW-->>Client: 200 OK {mfaRequired: true, challengeId}
+            Client->>User: Prompt for 6-digit OTP
+            User->>Client: Enter OTP
+            Client->>GW: POST /api/v1/auth/mfa/verify-challenge {challengeId, otpCode}
             GW->>AUTH: Forward MFA verification
-            AUTH->>AUTH: Verify TOTP/OTP
-            AUTH->>DB: INSERT RefreshToken (new, revoke old)
-            AUTH->>DB: UPDATE LoginAttempt (success)
-            AUTH-->>GW: 200 OK {accessToken, refreshToken}
-            GW-->>Client: 200 OK {accessToken, refreshToken}
+            AUTH->>DB: Verify OTP hash, check expiry & attempts
+            alt OTP Valid
+                AUTH->>DB: Mark LoginChallenge consumed
+                AUTH->>DB: INSERT RefreshToken (new, revoke old)
+                AUTH-->>GW: 200 OK {accessToken, refreshToken}
+                GW-->>Client: 200 OK {accessToken, refreshToken}
+            else OTP Invalid/Expired/Exhausted
+                AUTH->>DB: Increment attempts / Delete challenge
+                AUTH-->>GW: 401/400 Unauthorized
+                GW-->>Client: Error response
+            end
         else MFA Not Enabled
             AUTH->>DB: INSERT RefreshToken (new, revoke old)
             AUTH-->>GW: 200 OK {accessToken, refreshToken}
@@ -104,151 +96,80 @@ sequenceDiagram
     end
 ```
 
-### TOTP Implementation
-
-```java
-@Component
-public class TotpService {
-    
-    private static final int CODE_DIGITS = 6;
-    private static final int TIME_STEP_SECONDS = 30;
-    private static final String ALGORITHM = "HmacSHA1";
-    
-    public String generateSecret() {
-        byte[] secret = new byte[20]; // 160 bits
-        new SecureRandom().nextBytes(secret);
-        return Base32.encodeToString(secret); // Base32 for QR codes
-    }
-    
-    public String generateQrCodeUri(String email, String secret) {
-        return String.format("otpauth://totp/CitiCore:%s?secret=%s&issuer=CitiCore&algorithm=SHA1&digits=6&period=30",
-            URLEncoder.encode(email, StandardCharsets.UTF_8), secret);
-    }
-    
-    public boolean verifyCode(String secret, String code) {
-        long timeWindow = System.currentTimeMillis() / 1000 / 30;
-        String expectedCode = generateCode(secret, timeWindow);
-        if (constantTimeEquals(code, expectedCode)) return true;
-        
-        // Check adjacent windows (±1) for clock skew
-        String prevCode = generateCode(secret, timeWindow - 1);
-        if (constantTimeEquals(code, prevCode)) return true;
-        
-        String nextCode = generateCode(secret, timeWindow + 1);
-        return constantTimeEquals(code, nextCode);
-    }
-    
-    private String generateCode(String secret, long timeWindow) {
-        byte[] key = Base32.decode(secret);
-        byte[] timeBytes = ByteBuffer.allocate(8).putLong(timeWindow).array();
-        try {
-            Mac mac = Mac.getInstance(ALGORITHM);
-            mac.init(new SecretKeySpec(key, ALGORITHM));
-            byte[] hash = mac.doFinal(timeBytes);
-            int offset = hash[hash.length - 1] & 0xF;
-            int binary = ((hash[offset] & 0x7F) << 24) |
-                         ((hash[offset + 1] & 0xFF) << 16) |
-                         ((hash[offset + 2] & 0xFF) << 8) |
-                         (hash[offset + 3] & 0xFF);
-            int otp = binary % (int) Math.pow(10, CODE_DIGITS);
-            return String.format("%0" + CODE_DIGITS + "d", otp);
-        } catch (Exception e) {
-            throw new RuntimeException("TOTP generation failed", e);
-        }
-    }
-    
-    private boolean constantTimeEquals(String a, String b) {
-        if (a.length() != b.length()) return false;
-        int result = 0;
-        for (int i = 0; i < a.length(); i++) {
-            result |= a.charAt(i) ^ b.charAt(i);
-        }
-        return result == 0;
-    }
-}
-```
-
-### Email OTP Fallback
+### Email OTP Implementation
 
 ```java
 @Service
 public class EmailOtpService {
     
-    private static final int OTP_LENGTH = 8;
-    private static final int EXPIRY_MINUTES = 10;
+    private static final String OTP_CHARS = "0123456789";
+    
+    @Value("${citicore.auth.mfa.email-otp.length:6}")
+    private int otpLength;
+    
+    @Value("${citicore.auth.mfa.email-otp.expiry-minutes:5}")
+    private int expiryMinutes;
+    
+    @Value("${citicore.auth.mfa.email-otp.max-attempts:3}")
+    private int maxAttempts;
+    
+    private final SecureRandom secureRandom = new SecureRandom();
     
     public String generateOtp() {
-        String chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // No confusing chars
-        SecureRandom random = new SecureRandom();
-        StringBuilder sb = new StringBuilder(OTP_LENGTH);
-        for (int i = 0; i < OTP_LENGTH; i++) {
-            sb.append(chars.charAt(random.nextInt(chars.length())));
+        StringBuilder sb = new StringBuilder(otpLength);
+        for (int i = 0; i < otpLength; i++) {
+            sb.append(OTP_CHARS.charAt(secureRandom.nextInt(OTP_CHARS.length())));
         }
         return sb.toString();
     }
     
-    public void sendOtp(String email, String otp) {
-        // Send via Notification Service (SES/Mailpit)
-        notificationClient.sendEmail(EmailRequest.builder()
-            .to(email)
-            .subject("Your CitiCore Verification Code")
-            .template("otp-email")
-            .variables(Map.of("otp", otp, "expiryMinutes", EXPIRY_MINUTES))
-            .build());
+    public String hashOtp(String otp) {
+        // Use BCrypt to hash the OTP for storage
+        return BCrypt.hashpw(otp, BCrypt.gensalt());
+    }
+    
+    public boolean verifyOtp(String rawOtp, String hashedOtp) {
+        return BCrypt.checkpw(rawOtp, hashedOtp);
+    }
+    
+    public LocalDateTime calculateExpiry() {
+        return LocalDateTime.now().plusMinutes(expiryMinutes);
     }
 }
 ```
 
-### Backup Codes
+### Login Challenge Entity
 
 ```java
-@Component
-public class BackupCodeService {
+@Entity
+@Table(name = "login_challenges")
+public class LoginChallenge {
     
-    private static final int BACKUP_CODE_COUNT = 10;
-    private static final int CODE_LENGTH = 8;
+    @Id @GeneratedValue
+    private Long id;
     
-    public List<String> generateBackupCodes() {
-        Set<String> codes = new HashSet<>();
-        SecureRandom random = new SecureRandom();
-        String chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        
-        while (codes.size() < BACKUP_CODE_COUNT) {
-            StringBuilder sb = new StringBuilder(CODE_LENGTH);
-            for (int i = 0; i < CODE_LENGTH; i++) {
-                sb.append(chars.charAt(random.nextInt(chars.length())));
-            }
-            codes.add(sb.toString());
-        }
-        return new ArrayList<>(codes);
-    }
+    private Long userId;
     
-    @Transactional
-    public void saveBackupCodes(Long userId, List<String> codes) {
-        // Store hashed (BCrypt)
-        List<BackupCode> entities = codes.stream()
-            .map(code -> BackupCode.builder()
-                .userId(userId)
-                .codeHash(BCrypt.hashpw(code, BCrypt.gensalt()))
-                .used(false)
-                .build())
-            .toList();
-        backupCodeRepository.saveAll(entities);
-    }
+    @Column(unique = true)
+    private String challengeId; // UUID
     
-    @Transactional
-    public boolean verifyAndConsume(Long userId, String code) {
-        List<BackupCode> codes = backupCodeRepository.findByUserIdAndUsedFalse(userId);
-        for (BackupCode bc : codes) {
-            if (BCrypt.checkpw(code, bc.getCodeHash())) {
-                bc.setUsed(true);
-                bc.setUsedAt(Instant.now());
-                backupCodeRepository.save(bc);
-                return true;
-            }
-        }
-        return false;
-    }
+    private String otpHash; // BCrypt hashed OTP
+    
+    private LocalDateTime expiresAt;
+    
+    private int attempts = 0;
+    private int maxAttempts = 3;
+    
+    private boolean consumed = false;
+    private LocalDateTime consumedAt;
+    
+    private String purpose = "LOGIN_MFA";
+    
+    // Business logic methods
+    public boolean isExpired() { return expiresAt.isBefore(LocalDateTime.now()); }
+    public boolean isExhausted() { return attempts >= maxAttempts; }
+    public void incrementAttempts() { this.attempts++; }
+    public void markConsumed() { this.consumed = true; this.consumedAt = LocalDateTime.now(); }
 }
 ```
 
@@ -256,42 +177,28 @@ public class BackupCodeService {
 
 | Scenario | Flow |
 |----------|------|
-| **First Enrollment** | User scans QR → Enters TOTP → Backup codes generated & shown |
-| **Lost Device** | User clicks "Lost Device" → Email OTP sent → New TOTP enrolled → New backup codes |
-| **Forgot Password + MFA** | Password reset → MFA re-enrollment required |
-| **Admin Reset** | Admin triggers MFA reset → User re-enrolls |
-
-### MFA Methods Comparison
-
-| Method | Security | Usability | Recovery | Cost |
-|--------|----------|-----------|----------|------|
-| **TOTP (Primary)** | High (RFC 6238, time-based) | Good (scan once) | Backup codes | Free |
-| **Email OTP (Fallback)** | Medium (email compromise risk) | Universal | N/A | Free |
-| **SMS OTP** | Low (SIM swap risk) | Universal | N/A | Cost per SMS |
-| **Push Notification** | High (device-bound) | Good (one-tap) | Device recovery | Infrastructure cost |
-| **Hardware Key (FIDO2)** | Highest (phishing-resistant) | Extra hardware | Backup key | Hardware cost |
+| **First Enrollment** | User enables MFA → Email OTP MFA activated immediately (uses verified email) |
+| **Disable MFA** | User clicks disable → Enters OTP from email → MFA disabled |
+| **Forgot Password + MFA** | Password reset → MFA remains enabled (email unchanged) |
+| **Admin Reset** | Admin triggers MFA reset → User re-enables MFA |
 
 ### Configuration
 
 ```yaml
 # application.yml
-mfa:
-  totp:
-    enabled: true
-    issuer: "CitiCore"
-    digits: 6
-    period: 30
-    algorithm: HmacSHA1
-  email-otp:
-    enabled: true
-    length: 8
-    expiry-minutes: 10
-  backup-codes:
-    count: 10
-    length: 8
-  enforcement:
-    staff-roles: [ROLE_KYC_OFFICER, ROLE_KYC_MANAGER, ROLE_ADMIN, ROLE_COMPLIANCE_OFFICER, ROLE_OPERATIONS_OFFICER, ROLE_SUPPORT_AGENT]
-    customer-optional: true
+citicore:
+  auth:
+    mfa:
+      email-otp:
+        enabled: true
+        length: 6
+        expiry-minutes: 5
+        max-attempts: 3
+        resend-cooldown-minutes: 1
+        rate-limit-per-hour: 5
+    lockout:
+      max-attempts: 5
+      duration-minutes: 15
 ```
 
 ### JWT Claims for MFA
@@ -303,7 +210,7 @@ mfa:
   "roles": ["ROLE_KYC_OFFICER"],
   "permissions": [...],
   "mfaEnabled": true,
-  "mfaMethod": "TOTP",
+  "mfaMethod": "EMAIL_OTP",
   "iat": 1731923400,
   "exp": 1731924300
 }
@@ -313,21 +220,23 @@ mfa:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/auth/mfa/enroll` | POST | Initiate MFA enrollment (returns QR + backup codes) |
-| `/api/v1/auth/mfa/verify` | POST | Verify TOTP/Email OTP during login |
-| `/api/v1/auth/mfa/disable` | POST | Disable MFA (requires current MFA code) |
-| `/api/v1/auth/mfa/backup-codes` | GET | Get remaining backup codes (requires MFA) |
-| `/api/v1/auth/mfa/backup-codes/regenerate` | POST | Regenerate backup codes (requires MFA) |
-| `/api/v1/auth/mfa/lost-device` | POST | Initiate lost device recovery (Email OTP) |
+| `/api/v1/auth/mfa/enable` | POST | Enable Email OTP MFA (requires authenticated user) |
+| `/api/v1/auth/mfa/verify-challenge` | POST | Verify OTP during login (challengeId + otpCode) |
+| `/api/v1/auth/mfa/resend-otp` | POST | Resend OTP for existing challenge (challengeId) |
+| `/api/v1/auth/mfa/disable` | POST | Disable MFA (requires current OTP code) |
 
 ### Security Considerations
 
-1. **TOTP Secret Storage**: Encrypted at rest (AES-256-GCM) in database
-2. **Rate Limiting**: 5 attempts per 15 min on `/mfa/verify`
-3. **Clock Skew Tolerance**: ±1 time step (30 seconds)
-4. **Backup Codes**: Single-use, BCrypt hashed, consumed on use
-5. **Clock Drift**: Server time synced via NTP; client clock drift handled by ±1 window
-6. **Phishing Resistance**: TOTP resistant to phishing (time-based); Email OTP less so
+1. **OTP Storage**: Only BCrypt hash stored in database, never raw OTP
+2. **Challenge Binding**: Each challenge bound to user, purpose (LOGIN_MFA), and opaque challengeId
+3. **Short Expiry**: 5-minute expiry limits exposure window
+4. **Attempt Limits**: Maximum 3 verification attempts per challenge
+5. **Resend Cooldown**: 1-minute cooldown between resend requests
+6. **Rate Limiting**: 5 challenge creations per hour per user
+7. **Single-Use**: Challenges consumed on successful verification, safe against concurrent requests
+8. **Account Enumeration**: Consistent responses regardless of account existence
+9. **No Logging**: OTP values, challenge secrets never logged
+10. **Email Compromise Risk**: Acknowledged — email OTP less phishing-resistant than TOTP/FIDO2; mitigated by short expiry, attempt limits, and rate limiting
 
 ---
 
@@ -335,7 +244,8 @@ mfa:
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 1.0 | 2026-11-18 | Architecture Team | Initial ADR |
+| 2.0 | 2026-11-23 | Architecture Team | Migrated from TOTP to Email OTP primary |
+| 1.0 | 2026-11-18 | Architecture Team | Initial ADR (TOTP primary) |
 
 ---
 

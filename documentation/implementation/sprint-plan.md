@@ -28,7 +28,7 @@ This document provides a detailed sprint-by-sprint breakdown for the CitiCore Ba
 | Task ID | Description | Owner | Acceptance Criteria | ADR Ref |
 |---------|-------------|-------|---------------------|---------|
 | P0-01 | Add rate limiting to all auth endpoints (/login, /register, /verify, /resend) | Security Lead | 5 req/min login, 3 req/5min register enforced | DEC-009 |
-| P0-02 | Replace 6-digit OTP with 8-char alphanumeric code | Security Lead | `generateVerificationCode()` returns 2.8T combinations | DEC-009 |
+| P0-02 | Implement 6-digit numeric OTP for email verification (2.8M combinations) | Security Lead | `generateVerificationCode()` returns 6-digit numeric | DEC-009 |
 | P0-03 | Fix account-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/accounts/**` return 401 without JWT | - |
 | P0-04 | Fix user-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/api/v1/users/**` return 401 without JWT | - |
 | P0-05 | Add JWT secret validation at startup (min 32 chars, not default) | Security Lead | App fails fast if JWT_SECRET weak/missing | DEC-006 |
@@ -60,8 +60,8 @@ This document provides a detailed sprint-by-sprint breakdown for the CitiCore Ba
 | P1-01 | Implement account lockout after 5 failed logins (15 min) | Backend Lead | LoginAttempt entity, lockout enforced | DEC-009 |
 | P1-02 | Add password policy (min 12 chars, complexity) | Backend Lead | @Pattern on RegisterRequest, zxcvbn integration | DEC-009 |
 | P1-03 | Implement password reset flow (secure token, 15 min expiry) | Backend Lead | /forgot-password, /reset-password endpoints | DEC-009 |
-| P1-04 | Add TOTP MFA support with backup codes | Backend Lead | TOTP enroll/verify, backup codes generated | DEC-009 |
-| P1-04 | Revoke all refresh tokens on password change | Backend Lead | `refreshTokenRepo.revokeAllByUser()` called | DEC-006 |
+| P1-04 | Add Email OTP MFA support (6-digit, 5-min expiry, 3 attempts) | Backend Lead | MFA enable/disable, login challenge flow | DEC-009 |
+| P1-05 | Revoke all refresh tokens on password change | Backend Lead | `refreshTokenRepo.revokeAllByUser()` called | DEC-006 |
 | P1-06 | Fix AccountService.credit() ownership check for deposits | Backend Lead | Deposits require ownership, saga credits don't | - |
 | P1-07 | Implement RBAC with @PreAuthorize on admin endpoints | Backend Lead | ADMIN role required for KYC review, user mgmt | DEC-005 |
 | P1-08 | Add password policy validation in RegisterRequest | Backend Lead | Bean Validation annotations | DEC-009 |

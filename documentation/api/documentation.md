@@ -104,13 +104,22 @@ All errors follow RFC 7807 Problem Details:
 }
 ```
 
-**Response (200):**
+**Response (200) — No MFA:**
 ```json
 {
   "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
   "refreshToken": "dGhpcyBpcyBhIHJlZnJl...",
-  "tokenType": "Bearer",
-  "expiresIn": 900000
+  "mfaRequired": false
+}
+```
+
+**Response (200) — MFA Required:**
+```json
+{
+  "mfaRequired": true,
+  "challengeId": "550e8400-e29b-41d4-a716-446655440000",
+  "mfaMethods": ["EMAIL_OTP"],
+  "message": "MFA required. An OTP has been sent to your email."
 }
 ```
 
@@ -202,6 +211,95 @@ All errors follow RFC 7807 Problem Details:
 **Errors:**
 - 400: Already verified / Wait before requesting
 - 429: Rate limited
+
+---
+
+### 1.7 Enable Email OTP MFA
+**POST** `/auth/mfa/enable`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "message": "Email OTP MFA enabled successfully"
+}
+```
+
+**Errors:**
+- 400: MFA already enabled
+- 401: Invalid/expired token
+- 403: Forbidden
+
+---
+
+### 1.8 Verify MFA Challenge (Login)
+**POST** `/auth/mfa/verify-challenge`
+
+**Request:**
+```json
+{
+  "challengeId": "550e8400-e29b-41d4-a716-446655440000",
+  "otpCode": "123456"
+}
+```
+
+**Response (200) — Success:**
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "refreshToken": "dGhpcyBpcyBhIHJlZnJl...",
+  "mfaRequired": false
+}
+```
+
+**Errors:**
+- 400: Invalid/expired/exhausted challenge
+- 401: Invalid OTP code
+- 429: Rate limited / Too many attempts
+
+---
+
+### 1.9 Resend MFA OTP
+**POST** `/auth/mfa/resend-otp?challengeId=550e8400-e29b-41d4-a716-446655440000`
+
+**Response (200):**
+```json
+{
+  "message": "OTP resent successfully"
+}
+```
+
+**Errors:**
+- 400: Invalid/expired/consumed challenge
+- 429: Resend cooldown active (1 minute)
+
+---
+
+### 1.10 Disable MFA
+**POST** `/auth/mfa/disable`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request:**
+```json
+{
+  "challengeId": "550e8400-e29b-41d4-a716-446655440000",
+  "otpCode": "123456"
+}
+```
+
+**Response (200):**
+```json
+{
+  "message": "MFA disabled successfully"
+}
+```
+
+**Errors:**
+- 400: MFA not enabled / Invalid OTP
+- 401: Invalid/expired token
+- 403: Forbidden
 
 ---
 

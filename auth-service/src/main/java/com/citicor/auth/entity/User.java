@@ -38,6 +38,15 @@ public class User {
     @Column(name = "verification_expiration")
     private LocalDateTime verificationCodeExpiresAt;
 
+    @Column(name = "mfa_enabled")
+    private boolean mfaEnabled = false;
+
+    @Column(name = "mfa_method", length = 20)
+    private String mfaMethod; // EMAIL_OTP
+
+    @Column(name = "mfa_enabled_at")
+    private LocalDateTime mfaEnabledAt;
+
     public String getVerificationCode() {
         return verificationCode;
     }
@@ -100,5 +109,29 @@ public class User {
 
     public void setStatus(UserStatus status) {
         this.status = status;
+    }
+
+    public boolean isMfaEnabled() {
+        return mfaEnabled;
+    }
+
+    public void setMfaEnabled(boolean mfaEnabled) {
+        this.mfaEnabled = mfaEnabled;
+    }
+
+    public String getMfaMethod() {
+        return mfaMethod;
+    }
+
+    public void setMfaMethod(String mfaMethod) {
+        this.mfaMethod = mfaMethod;
+    }
+
+    public LocalDateTime getMfaEnabledAt() {
+        return mfaEnabledAt;
+    }
+
+    public void setMfaEnabledAt(LocalDateTime mfaEnabledAt) {
+        this.mfaEnabledAt = mfaEnabledAt;
     }
 }

@@ -123,7 +123,7 @@ All 8 pending ADRs have been **APPROVED** with the exact choices and constraints
 - DEC-006: JWT Claims Size → Permissions in JWT (15min expiry) ✅
 - DEC-007: Ledger Service → Separate microservice ✅
 - DEC-008: Compliance Service → Build abstraction; integrate vendor APIs ✅
-- DEC-009: MFA Methods → TOTP primary; Email OTP fallback ✅
+- DEC-009: MFA Methods → Email OTP primary ✅
 
 ---
 
@@ -492,7 +492,7 @@ All 8 pending ADRs have been **APPROVED** with the exact choices and constraints
 - DEC-006: JWT Claims Size → Permissions in JWT (15min expiry) ✅
 - DEC-007: Ledger Service → Separate microservice ✅
 - DEC-008: Compliance Service → Build abstraction; integrate vendor APIs ✅
-- DEC-009: MFA Methods → TOTP primary; Email OTP fallback ✅
+- DEC-009: MFA Methods → Email OTP primary ✅
 
 ---
 

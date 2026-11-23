@@ -84,7 +84,7 @@ This directory contains all architecture documentation for the CitiCore Banking 
 | DEC-006 | JWT Claims Size - Permissions in token | ✅ Approved |
 | DEC-007 | Ledger Service - Separate microservice | ✅ Approved |
 | DEC-008 | Compliance Service - Build abstraction | ✅ Approved |
-| DEC-009 | MFA Methods - TOTP primary, Email fallback | ✅ Approved |
+| DEC-009 | MFA Methods - Email OTP primary | ✅ Approved |
 | DEC-010 | Malware Scanning - ClamAV with abstraction | ✅ Approved |
 | DEC-011 | MySQL Encryption - RDS KMS + app-level envelope | ✅ Approved |
 | DEC-012 | Secrets Management - AWS Secrets Manager | ✅ Approved |

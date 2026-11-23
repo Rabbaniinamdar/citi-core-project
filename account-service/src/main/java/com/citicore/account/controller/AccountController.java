@@ -10,6 +10,7 @@ import com.citicore.account.entity.AuthUser;
 import com.citicore.account.service.AccountService;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
@@ -33,7 +34,8 @@ public class AccountController {
      *
      * Body: { "accountType": "SAVINGS", "initialDeposit": 5000 }
      */
-        @PostMapping("/create")
+    @PreAuthorize("hasRole('CUSTOMER')")
+    @PostMapping("/create")
     public ResponseEntity<ApiResponse<AccountResponse>> createAccount(
             @RequestBody CreateAccountRequest request) {
 
@@ -56,6 +58,7 @@ public class AccountController {
      * GET /api/v1/account/my-accounts
      * Returns all accounts owned by the authenticated user.
      */
+    @PreAuthorize("hasRole('CUSTOMER')")
     @GetMapping("/my-accounts")
     public ResponseEntity<ApiResponse<List<AccountResponse>>> getMyAccounts() {
         AuthUser authUser = getAuthUser();
@@ -74,6 +77,7 @@ public class AccountController {
      *
      * Body: { "accNo": "CITI000000000001", "amount": 10000, "txnRef": "DEP_xxx" }
      */
+    @PreAuthorize("hasRole('CUSTOMER')")
     @PostMapping("/deposit")
     public ResponseEntity<ApiResponse<String>> deposit(
             @RequestBody DepositWithdrawRequest request) {
@@ -94,6 +98,7 @@ public class AccountController {
      *
      * Body: { "accNo": "CITI000000000001", "amount": 5000, "txnRef": "WIT_xxx" }
      */
+    @PreAuthorize("hasRole('CUSTOMER')")
     @PostMapping("/withdraw")
     public ResponseEntity<ApiResponse<String>> withdraw(
             @RequestBody DepositWithdrawRequest request) {
@@ -112,7 +117,9 @@ public class AccountController {
      * GET /api/v1/account/validate-transfer
      * Called by transaction-service via Feign for pre-validation (fail-fast).
      * Non-locking balance check before the saga starts.
+     * Internal service endpoint - requires SERVICE role.
      */
+    @PreAuthorize("hasRole('SERVICE')")
     @GetMapping("/validate-transfer")
     public ResponseEntity<Void> validateTransfer(
             @RequestParam String accNo,
@@ -125,6 +132,7 @@ public class AccountController {
      * Returns the current balance for the given account number.
      * Served from Redis cache (Cache-Aside pattern) — fast ⚡
      */
+    @PreAuthorize("hasRole('CUSTOMER')")
     @GetMapping("/balance/{accNo}")
     public ResponseEntity<ApiResponse<BigDecimal>> getBalance(@PathVariable String accNo) {
         AuthUser authUser = getAuthUser();
@@ -136,6 +144,7 @@ public class AccountController {
      * GET /api/v1/account/mini-statement/{accNo}
      * Returns the last 10 transactions for the given account.
      */
+    @PreAuthorize("hasRole('CUSTOMER')")
     @GetMapping("/mini-statement/{accNo}")
     public ResponseEntity<ApiResponse<List<AccountStatement>>> getMiniStatement(@PathVariable String accNo) {
         AuthUser authUser = getAuthUser();
@@ -146,6 +155,7 @@ public class AccountController {
      * GET /api/v1/account/statement/{accNo}?page=0&size=10
      * Returns paginated full statement for the given account.
      */
+    @PreAuthorize("hasRole('CUSTOMER')")
     @GetMapping("/statement/{accNo}")
     public ResponseEntity<ApiResponse<Page<AccountStatement>>> getStatement(
             @PathVariable String accNo,

@@ -26,7 +26,7 @@ This roadmap prioritizes all identified issues from the architecture, bug, secur
 | Task ID | Issue | Source | Description | Owner | Done Criteria |
 |---------|-------|--------|-------------|-------|---------------|
 | P0-01 | SEC-001 | Security | Add rate limiting to all auth endpoints (/login, /register, /verify, /resend) | Security Lead | 5 req/min login, 3 req/5min register enforced |
-| P0-02 | SEC-002 | Security | Replace 6-digit OTP with 8-char alphanumeric code | Security Lead | `generateVerificationCode()` returns 2.8T combinations |
+| P0-02 | SEC-002 | Security | Implement 6-digit numeric OTP for email verification (2.8M combinations) | Security Lead | `generateVerificationCode()` returns 6-digit numeric |
 | P0-03 | SEC-009 | Security | Fix account-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/accounts/**` return 401 without JWT |
 | P0-04 | SEC-010 | Security | Fix user-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/api/v1/users/**` return 401 without JWT |
 | P0-05 | SEC-015 | Security | Add JWT secret validation at startup (min 32 chars, not default) | Security Lead | App fails fast if JWT_SECRET weak/missing |
@@ -54,7 +54,7 @@ This roadmap prioritizes all identified issues from the architecture, bug, secur
 | P1-01 | SEC-003 | Security | Implement account lockout after 5 failed logins (15 min) | Backend Lead | LoginAttempt entity, lockout enforced |
 | P1-02 | SEC-004 | Security | Add password policy (min 12 chars, complexity) | Backend Lead | @Pattern on RegisterRequest, zxcvbn integration |
 | P1-03 | SEC-005 | Security | Implement password reset flow (secure token, 15 min expiry) | Backend Lead | /forgot-password, /reset-password endpoints |
-| P1-04 | SEC-006 | Security | Add TOTP MFA support with backup codes | Backend Lead | TOTP enroll/verify, backup codes generated |
+| P1-04 | SEC-006 | Security | Add Email OTP MFA support (6-digit, 5-min expiry, 3 attempts) | Backend Lead | MFA enable/disable, login challenge flow |
 | P1-05 | SEC-007 | Security | Revoke all refresh tokens on password change | Backend Lead | `refreshTokenRepo.revokeAllByUser()` called |
 | P1-06 | SEC-011 | Security | Fix AccountService.credit() ownership check for deposits | Backend Lead | Deposits require ownership, saga credits don't |
 | P1-07 | SEC-013 | Security | Implement RBAC with @PreAuthorize on admin endpoints | Backend Lead | ADMIN role required for KYC review, user mgmt |

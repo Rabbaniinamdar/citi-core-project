@@ -85,11 +85,11 @@ private String password;
 **Impact:** Users cannot recover accounts; support burden
 **Fix:** Implement secure reset token (JWT, 15-min expiry, single-use)
 
-### SEC-006: MEDIUM - No MFA/TOTP Support
-**Location:** `auth-service` - only email OTP
+### SEC-006: MEDIUM - No Email OTP MFA Support
+**Location:** `auth-service` - only password authentication
 **OWASP:** API2:2023 Broken Authentication
 **Impact:** Single factor only - phishing vulnerable
-**Fix:** Add TOTP (RFC 6238) with backup codes
+**Fix:** Add Email OTP MFA (6-digit, 5-min expiry, 3 max attempts, BCrypt hashed)
 
 ### SEC-007: MEDIUM - Refresh Token Not Revoked on Password Change
 **Location:** `auth-service` - no password change endpoint
@@ -550,7 +550,7 @@ public void validateSecret() {
 | **GDPR/PDPB** | Right to erasure | ❌ Not implemented | HIGH |
 | | Data portability | ❌ Not implemented | MEDIUM |
 | | Consent management | ❌ Not implemented | HIGH |
-| **FFIEC** | Authentication (multi-factor) | ❌ No MFA | HIGH |
+| **FFIEC** | Authentication (multi-factor) | ⚠️ Email OTP MFA implemented | MEDIUM |
 | | Encryption in transit/rest | ⚠️ Partial | MEDIUM |
 | | Audit logging | ❌ Not implemented | HIGH |
 

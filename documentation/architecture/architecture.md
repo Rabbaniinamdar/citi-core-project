@@ -104,7 +104,7 @@ CitiCore is a **microservices-based digital banking platform** designed to deliv
 │  │ • Login/JWT   │  │  │ • Deposit/    │  │  │ • Saga Orchestration    │   │
 │  │ • Token Mgmt  │  │  │   Withdraw    │  │  │ • Daily Limits          │   │
 │  │ • Email Verify│  │  │ • Balance     │  │  │ • Idempotency           │   │
-│  │ • MFA (TOTP)  │  │  │ • Statements  │  │  │ • History/Status        │   │
+│  │ • MFA (Email OTP)  │  │  │ • Statements  │  │  │ • History/Status        │   │
 │  └───────────────┘  │  │ • Auth Holds  │  │  └─────────────────────────┘   │
 │                     │  │ • Interest    │  │                                 │
 │  ┌───────────────┐  │  │ • Closure     │  │  ┌─────────────────────────┐   │
@@ -436,7 +436,7 @@ graph TB
 |--------|--------|
 | **Database** | `citicore_authdb` schema in AWS RDS MySQL |
 | **Primary Entities** | User, Role, RefreshToken, UserRole, LoginAttempt |
-| **Key Functions** | Registration, Login, JWT issuance, Refresh rotation, Email verification, Password reset, MFA (TOTP), Account lockout, Rate limiting |
+| **Key Functions** | Registration, Login, JWT issuance, Refresh rotation, Email verification, Password reset, MFA (Email OTP), Account lockout, Rate limiting |
 | **Published Events** | `otp-verification-topic` → VerificationOtpEvent, `user-created-topic` → UserCreatedEvent |
 | **Security** | BCrypt, JWT HS256 (15min access, 7day refresh), Rate limiting (5 req/min login), Failed attempt tracking |
 | **Service Discovery** | Kubernetes DNS (production); Eureka (local Docker Compose) |
@@ -1070,19 +1070,27 @@ sequenceDiagram
     AUTH->>AUTH: Verify password (BCrypt)
     alt Valid Credentials
         AUTH->>DB: Check MFA enabled?
-        alt MFA Enabled
-            AUTH->>DB: INSERT LoginAttempt (pending MFA)
-            AUTH-->>GW: 200 OK {mfaRequired: true, mfaMethods: ["TOTP", "EMAIL"]}
-            GW-->>Client: 200 OK {mfaRequired: true}
-            Client->>User: Prompt for MFA code
-            User->>Client: Enter TOTP/Email OTP
-            Client->>GW: POST /api/v1/auth/mfa/verify {code, method}
+        alt MFA Enabled (Email OTP)
+            AUTH->>DB: INSERT LoginChallenge (otp_hash, expires_at, max_attempts=3)
+            AUTH->>NOTIF: Publish OTP event (Kafka)
+            NOTIF->>User: Send 6-digit OTP via email
+            AUTH-->>GW: 200 OK {mfaRequired: true, challengeId, mfaMethods: ["EMAIL_OTP"]}
+            GW-->>Client: 200 OK {mfaRequired: true, challengeId}
+            Client->>User: Prompt for 6-digit OTP
+            User->>Client: Enter OTP
+            Client->>GW: POST /api/v1/auth/mfa/verify-challenge {challengeId, otpCode}
             GW->>AUTH: Forward MFA verification
-            AUTH->>AUTH: Verify TOTP/OTP
-            AUTH->>DB: INSERT RefreshToken (new, revoke old)
-            AUTH->>DB: UPDATE LoginAttempt (success)
-            AUTH-->>GW: 200 OK {accessToken, refreshToken}
-            GW-->>Client: 200 OK {accessToken, refreshToken}
+            AUTH->>DB: Verify OTP hash, check expiry & attempts
+            alt OTP Valid
+                AUTH->>DB: Mark LoginChallenge consumed
+                AUTH->>DB: INSERT RefreshToken (new, revoke old)
+                AUTH-->>GW: 200 OK {accessToken, refreshToken}
+                GW-->>Client: 200 OK {accessToken, refreshToken}
+            else OTP Invalid/Expired/Exhausted
+                AUTH->>DB: Increment attempts / Delete challenge
+                AUTH-->>GW: 401/400 Unauthorized
+                GW-->>Client: Error response
+            end
         else MFA Not Enabled
             AUTH->>DB: INSERT RefreshToken (new, revoke old)
             AUTH-->>GW: 200 OK {accessToken, refreshToken}
@@ -1156,7 +1164,7 @@ graph TB
 | **Rate Limiting (Auth)** | Resilience4j/Bucket4j (5 req/min login) | ⚠️ Planned (P0) |
 | **Rate Limiting (API)** | Redis Token Bucket (Gateway) | ✅ |
 | **Account Lockout** | Failed attempt tracking (5/15min) | ⚠️ Planned (P1) |
-| **MFA/TOTP** | RFC 6238 + Backup codes | ⚠️ Planned (P1) |
+| **MFA/Email OTP** | 6-digit, 5-min expiry, 3 attempts, BCrypt hashed | ✅ Implemented |
 | **Password Reset** | Secure token (15min, single-use) | ⚠️ Planned (P0) |
 | **RBAC** | Spring @EnableMethodSecurity + @PreAuthorize + PermissionEvaluator | ✅ Designed |
 | **ABAC** | Custom PermissionEvaluator + SpEL expressions | ✅ Designed |
@@ -2026,7 +2034,7 @@ flowchart TD
 | **DEC-006: JWT Claims Size** | All permissions in JWT vs Reference to permission service | Permissions in JWT (15min expiry, stateless) | **Approved** |
 | **DEC-007: Ledger Service** | Separate microservice vs Embedded in Account Service | Separate microservice (regulatory independence) | **Approved** |
 | **DEC-008: Compliance Service** | Build vs Buy (sanctions/PEP screening) | Build abstraction; integrate vendor APIs | **Approved** |
-| **DEC-009: MFA Methods** | TOTP only vs TOTP + SMS + Email | TOTP primary; Email OTP fallback | **Approved** |
+| **DEC-009: MFA Methods** | Email OTP only vs Email OTP + SMS + TOTP | Email OTP primary | **Approved** |
 | **DEC-010: Document Malware Scanning** | S3 Object Lambda + ClamAV vs Vendor API | S3 Object Lambda + ClamAV (cost-effective) | **Pending** |
 
 ---

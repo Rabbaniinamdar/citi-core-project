@@ -12,6 +12,7 @@ import com.citicore.gateway.service.UserService;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -111,15 +112,16 @@ public class KycController {
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // ADMIN ENDPOINTS
-    // In production, secure with: @PreAuthorize("hasRole('ADMIN')")
+    // ADMIN ENDPOINTS — Secured with @PreAuthorize per ADR-005
     // ─────────────────────────────────────────────────────────────────────────────
 
     /**
      * GET /api/v1/kyc/admin/pending
      * Returns all users currently UNDER_REVIEW.
      * Used by admin dashboard to display the KYC review queue.
+     * Requires ADMIN role.
      */
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping("/admin/pending")
     public ResponseEntity<ApiResponse<List<ProfileResponse>>> getPendingKycUsers() {
         List<UserProfile> profiles = userService.getPendingKycUsers();
@@ -134,9 +136,11 @@ public class KycController {
      * GET /api/v1/kyc/admin/users?status=APPROVED
      * Returns all users with a given KYC status.
      * Used by admin for reporting and compliance.
+     * Requires ADMIN role.
      *
      * @param status PENDING / UNDER_REVIEW / APPROVED / REJECTED
      */
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping("/admin/users")
     public ResponseEntity<ApiResponse<List<ProfileResponse>>> getUsersByStatus(
             @RequestParam KycStatus status) {
@@ -151,6 +155,7 @@ public class KycController {
     /**
      * POST /api/v1/kyc/admin/review/{userId}
      * Admin approves or rejects a user's KYC.
+     * Requires KYC_MANAGER or ADMIN role.
      *
      * Body: { "status": "APPROVED" }  or  { "status": "REJECTED" }
      *
@@ -162,7 +167,9 @@ public class KycController {
      * Transition rules enforced in UserService:
      *   - Only UNDER_REVIEW → APPROVED or REJECTED allowed
      *   - Already APPROVED cannot be rejected
+     *   - KYC_OFFICER can review but only KYC_MANAGER can approve/reject (maker-checker)
      */
+    @PreAuthorize("hasRole('KYC_MANAGER') or hasRole('ADMIN')")
     @PostMapping("/admin/review/{userId}")
     public ResponseEntity<ApiResponse<ProfileResponse>> reviewKyc(
             @PathVariable Long userId,

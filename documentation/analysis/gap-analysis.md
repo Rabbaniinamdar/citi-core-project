@@ -72,7 +72,7 @@ This analysis compares the current CitiCore implementation against a realistic d
 | Permission-Based Authorization | ❌ Not Implemented | No fine-grained permissions |
 | Account Lockout | ❌ Not Implemented | No failed login tracking |
 | Brute-Force Protection | ❌ Not Implemented | No rate limiting on auth endpoints |
-| OTP/MFA Verification | ⚠️ Partial | Email OTP only, no TOTP/SMS |
+| OTP/MFA Verification | ✅ Implemented | Email OTP MFA (6-digit, 5-min expiry, 3 attempts) |
 | Password Reset | ❌ Not Implemented | No forgot password flow |
 | Session & Device Management | ❌ Not Implemented | No device fingerprinting |
 
@@ -82,7 +82,7 @@ This analysis compares the current CitiCore implementation against a realistic d
 |---------|----------------|----------|--------|
 | Account Lockout After Failed Attempts | **Mandatory Core** | P0 | Low |
 | Brute-Force Protection (Rate Limiting) | **Mandatory Core** | P0 | Low |
-| TOTP/Authenticator App MFA | **Mandatory Core** | P1 | Medium |
+| Email OTP MFA | **Mandatory Core** | P1 | Medium |
 | SMS OTP Fallback | **Important Digital** | P2 | Medium (External) |
 | Password Reset Flow | **Mandatory Core** | P0 | Medium |
 | Logout All Devices | **Important Digital** | P1 | Low |
@@ -95,7 +95,7 @@ This analysis compares the current CitiCore implementation against a realistic d
 1. **Rate Limiting** - Add Resilience4j/Bucket4j on `/login`, `/register`, `/verify`
 2. **Failed Login Tracking** - `LoginAttempt` entity with count, lockout threshold (5), unlock after 15min
 3. **Password Reset** - Secure token emailed, single-use, 15min expiry
-4. **TOTP MFA** - Google Authenticator compatible, backup codes
+4. **Email OTP MFA** - 6-digit code, 5-min expiry, 3 max attempts, BCrypt hashed
 5. **Session Management** - Track device fingerprint, allow revocation
 
 ---

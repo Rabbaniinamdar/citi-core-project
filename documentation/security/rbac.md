@@ -742,7 +742,7 @@ public void auditExcessivePermissions() {
 
 ### 11.2 Admin Action Requirements
 
-1. **MFA Required**: All admin actions require MFA verification (TOTP)
+1. **MFA Required**: All admin actions require MFA verification (Email OTP)
 2. **Dual Approval**: Critical actions (role assignment, config change) require second admin approval in production
 3. **Audit Logging**: Every admin action logged with actor, target, timestamp, reason
 4. **Session Recording**: Admin sessions recorded for compliance (planned)

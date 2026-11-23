@@ -76,25 +76,29 @@ flowchart TD
         LO_DB --> LO_SUCCESS
     end
 
-    subgraph MFA_FLOW ["5. MFA/TOTP Flow (Planned)"]
-        MFA_START[User Enables MFA]
-        MFA_QR[Generate QR Code\nTOTP Secret]
-        MFA_APP[User Scans in Authenticator App]
-        MFA_VERIFY[POST /auth/mfa/verify\n{code}]
-        MFA_VALIDATE[Validate TOTP Code\nRFC 6238]
-        MFA_BACKUP[Generate Backup Codes\nStore Hashed]
-        MFA_LOGIN[Login: Require TOTP\nAfter Password]
-        MFA_CHALLENGE[Challenge for TOTP Code]
-        MFA_GRANT[Grant Tokens on Success]
+    subgraph MFA_FLOW ["5. MFA/Email OTP Flow"]
+        MFA_START[User Enables Email OTP MFA]
+        MFA_ENABLE[POST /auth/mfa/enable\n{authHeader}]
+        MFA_DB_UPDATE[Update User\nmfaEnabled=true, mfaMethod=EMAIL_OTP]
+        MFA_LOGIN[Login with Password]
+        MFA_CHALLENGE[Create LoginChallenge\n6-digit OTP, 5min expiry\nMax 3 attempts]
+        MFA_EMAIL[Send OTP via Email\nKafka → Notification Service]
+        MFA_VERIFY[POST /auth/mfa/verify-challenge\n{challengeId, otpCode}]
+        MFA_VALIDATE[Verify OTP Hash\nCheck Expiry & Attempts]
+        MFA_CONSUME[Mark Challenge Consumed\nIssue Tokens]
+        MFA_DISABLE[Disable MFA\nRequires Current OTP]
 
-        MFA_START --> MFA_QR
-        MFA_QR --> MFA_APP
-        MFA_APP --> MFA_VERIFY
-        MFA_VERIFY --> MFA_VALIDATE
-        MFA_VALIDATE --> MFA_BACKUP
-        MFA_BACKUP --> MFA_LOGIN
+        MFA_START --> MFA_ENABLE
+        MFA_ENABLE --> MFA_DB_UPDATE
+        MFA_DB_UPDATE --> MFA_LOGIN
         MFA_LOGIN --> MFA_CHALLENGE
-        MFA_CHALLENGE --> MFA_GRANT
+        MFA_CHALLENGE --> MFA_EMAIL
+        MFA_EMAIL --> MFA_VERIFY
+        MFA_VERIFY --> MFA_VALIDATE
+        MFA_VALIDATE -->|Valid| MFA_CONSUME
+        MFA_VALIDATE -->|Invalid| MFA_RETRY[Increment Attempts\nMax 3]
+        MFA_RETRY --> MFA_VERIFY
+        MFA_CONSUME --> MFA_GRANT[Grant Tokens]
     end
 
     subgraph PASSWORD_RESET ["6. Password Reset Flow (Planned)"]

@@ -26,12 +26,12 @@ This document tracks the implementation status of all major features across the 
 | User Registration | COMPLETE_AND_VERIFIED | auth-service | Email verification via OTP |
 | User Login (JWT) | COMPLETE_AND_VERIFIED | auth-service | HS256, 15min access / 7d refresh |
 | Refresh Token Rotation | COMPLETE_AND_VERIFIED | auth-service | Revoke old, issue new |
-| Email Verification (OTP) | COMPLETE_AND_VERIFIED | auth-service | 8-char alphanumeric, 10min expiry |
+| Email Verification (OTP) | COMPLETE_AND_VERIFIED | auth-service | 6-digit numeric, 15min expiry |
 | Password Reset | NOT_IMPLEMENTED | auth-service | P1-03 - Sprint 1 |
 | Password Change | NOT_IMPLEMENTED | auth-service | P1-10 - Sprint 1 |
 | Account Lockout | NOT_IMPLEMENTED | auth-service | P1-01 - Sprint 1 |
 | Password Policy | NOT_IMPLEMENTED | auth-service | P1-02 - Sprint 1 |
-| TOTP MFA | NOT_IMPLEMENTED | auth-service | P1-04 - Sprint 1 |
+| Email OTP MFA | NOT_IMPLEMENTED | auth-service | P1-04 - Sprint 1 |
 | JWT Claims (roles, permissions, cases) | PARTIALLY_IMPLEMENTED | auth-service | Claims structure defined, needs implementation |
 | JWT Secret Validation | NOT_IMPLEMENTED | auth-service | P0-05, P0-07 |
 | Refresh Token Revocation (logout) | COMPLETE_AND_VERIFIED | auth-service | Single-use rotation |
@@ -183,7 +183,7 @@ This document tracks the implementation status of all major features across the 
 | Rate Limiting (API) | COMPLETE_AND_VERIFIED | API Gateway | Redis Token Bucket |
 | Account Lockout | NOT_IMPLEMENTED | Auth Service | P1-01 - Sprint 1 |
 | Password Policy | NOT_IMPLEMENTED | Auth Service | P1-02 - Sprint 1 |
-| TOTP MFA | NOT_IMPLEMENTED | Auth Service | P1-04 - Sprint 1 |
+| Email OTP MFA | NOT_IMPLEMENTED | Auth Service | P1-04 - Sprint 1 |
 | Password Reset | NOT_IMPLEMENTED | Auth Service | P1-03 - Sprint 1 |
 | JWT Secret Validation | NOT_IMPLEMENTED | All services | P0-05, P0-07 |
 | RBAC Enforcement | PARTIALLY_IMPLEMENTED | All services | Sprint 1 |
