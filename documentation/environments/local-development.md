@@ -174,7 +174,20 @@ curl -X POST http://localhost:8080/api/v1/auth/mfa/verify-challenge \
   -H "Content-Type: application/json" \
   -d "{\"challengeId\":\"$CHALLENGE_ID\",\"otpCode\":\"123456\"}"
 
-# 7. Upload KYC documents (use sample files in ./test-data/kyc/)
+# 7. Disable MFA (optional - two-step challenge flow)
+# Step 1: Initiate disable - returns challengeId and sends OTP
+DISABLE_RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/auth/mfa/disable/initiate \
+  -H "Authorization: Bearer $TOKEN")
+
+DISABLE_CHALLENGE_ID=$(echo $DISABLE_RESPONSE | jq -r .challengeId)
+
+# Check Mailpit at http://localhost:8025 for 6-digit OTP, then verify
+curl -X POST http://localhost:8080/api/v1/auth/mfa/disable \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"challengeId\":\"$DISABLE_CHALLENGE_ID\",\"otpCode\":\"123456\"}"
+
+# 8. Upload KYC documents (use sample files in ./test-data/kyc/)
 # 8. Submit KYC for review
 # 9. As KYC Officer: review and recommend
 # 10. As KYC Manager: approve

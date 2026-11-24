@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -135,19 +136,30 @@ public class AuthController {
         }
     }
 
-    @PostMapping("/mfa/disable")
-    public ResponseEntity<?> disableMfa(@RequestHeader("Authorization") String authHeader,
-                                        @RequestBody VerifyMfaChallengeRequest req) {
-        try {
-            String token = authHeader.replace("Bearer ", "");
-            Long userId = service.extractUserIdFromToken(token);
-            service.disableMfa(userId, req.getOtpCode());
-            return ResponseEntity.ok("MFA disabled successfully");
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+    @PostMapping("/mfa/disable/initiate")
+    public ResponseEntity<?> initiateMfaDisable(
+            @RequestHeader("Authorization") String authHeader
+    ) {
+        Long userId = service.extractUserIdFromToken(
+                authHeader.replace("Bearer ", "")
+        );
+
+        String challengeId = service.initiateMfaDisable(userId);
+        return ResponseEntity.ok(Map.of("challengeId", challengeId));
     }
 
+    @PostMapping("/mfa/disable")
+    public ResponseEntity<?> disableMfa(
+            @RequestHeader("Authorization") String authHeader,
+            @Valid @RequestBody VerifyMfaChallengeRequest req
+    ) {
+        Long userId = service.extractUserIdFromToken(
+                authHeader.replace("Bearer ", "")
+        );
+
+        service.disableMfa(userId, req.getChallengeId(), req.getOtpCode());
+        return ResponseEntity.ok("MFA disabled successfully");
+    }
     private ResponseEntity<?> rateLimitFallback(String method, Throwable ex) {
         return ResponseEntity.status(429).body("Too many requests. Please try again later.");
     }

@@ -41,6 +41,9 @@ public class LoginChallenge {
     @Column(name = "purpose", nullable = false, length = 30)
     private String purpose = "LOGIN_MFA";
 
+    @Column(name = "resend_count", nullable = false)
+    private int resendCount = 0;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -133,6 +136,18 @@ public class LoginChallenge {
 
     public void setPurpose(String purpose) {
         this.purpose = purpose;
+    }
+
+    public int getResendCount() {
+        return resendCount;
+    }
+
+    public void setResendCount(int resendCount) {
+        this.resendCount = resendCount;
+    }
+
+    public void incrementResendCount() {
+        this.resendCount++;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -96,6 +96,45 @@ sequenceDiagram
     end
 ```
 
+### MFA Disable Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client
+    participant GW as API Gateway
+    participant AUTH as Auth Service
+    participant DB as Auth DB
+    participant NOTIF as Notification Service
+
+    User->>Client: Request MFA disable
+    Client->>GW: POST /api/v1/auth/mfa/disable/initiate\nAuthorization: Bearer <token>
+    GW->>AUTH: Forward (JWT validated)
+    AUTH->>DB: Check MFA enabled, email verified
+    AUTH->>DB: INSERT LoginChallenge (purpose=DISABLE_MFA)
+    AUTH->>NOTIF: Publish OTP event (Kafka)
+    NOTIF->>User: Send 6-digit OTP via email
+    AUTH-->>GW: 200 OK {challengeId}
+    GW-->>Client: 200 OK {challengeId}
+    Client->>User: Prompt for 6-digit OTP
+    User->>Client: Enter OTP
+    Client->>GW: POST /api/v1/auth/mfa/disable\nAuthorization: Bearer <token>\n{challengeId, otpCode}
+    GW->>AUTH: Forward disable verification
+    AUTH->>DB: Verify challenge: userId matches, purpose=DISABLE_MFA, OTP valid, not consumed/expired
+    alt OTP Valid
+        AUTH->>DB: Mark challenge consumed
+        AUTH->>DB: Update user: mfaEnabled=false, mfaMethod=null
+        AUTH->>DB: Delete unconsumed LOGIN_MFA and DISABLE_MFA challenges
+        AUTH-->>GW: 200 OK {message: "MFA disabled successfully"}
+        GW-->>Client: 200 OK
+    else OTP Invalid/Expired/Exhausted
+        AUTH->>DB: Increment attempts / Delete challenge
+        AUTH-->>GW: 401/400 Unauthorized
+        GW-->>Client: Error response
+    end
+    Note over Client: No tokens issued — disable is a standalone security operation
+```
+
 ### Email OTP Implementation
 
 ```java
@@ -178,7 +217,7 @@ public class LoginChallenge {
 | Scenario | Flow |
 |----------|------|
 | **First Enrollment** | User enables MFA → Email OTP MFA activated immediately (uses verified email) |
-| **Disable MFA** | User clicks disable → Enters OTP from email → MFA disabled |
+| **Disable MFA** | Two-step: (1) Initiate disable → challenge created, OTP sent; (2) Verify challenge ID + OTP → MFA disabled |
 | **Forgot Password + MFA** | Password reset → MFA remains enabled (email unchanged) |
 | **Admin Reset** | Admin triggers MFA reset → User re-enables MFA |
 
@@ -220,23 +259,25 @@ citicore:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/auth/mfa/enable` | POST | Enable Email OTP MFA (requires authenticated user) |
+| `/api/v1/auth/mfa/enable` | POST | Enable Email OTP MFA (requires authenticated user, verified email) |
 | `/api/v1/auth/mfa/verify-challenge` | POST | Verify OTP during login (challengeId + otpCode) |
 | `/api/v1/auth/mfa/resend-otp` | POST | Resend OTP for existing challenge (challengeId) |
-| `/api/v1/auth/mfa/disable` | POST | Disable MFA (requires current OTP code) |
+| `/api/v1/auth/mfa/disable/initiate` | POST | Initiate MFA disable — creates `DISABLE_MFA` challenge, sends OTP, returns challengeId |
+| `/api/v1/auth/mfa/disable` | POST | Verify `DISABLE_MFA` challenge (challengeId + otpCode), disables MFA, no tokens issued |
 
 ### Security Considerations
 
 1. **OTP Storage**: Only BCrypt hash stored in database, never raw OTP
-2. **Challenge Binding**: Each challenge bound to user, purpose (LOGIN_MFA), and opaque challengeId
+2. **Challenge Binding**: Each challenge bound to user, purpose (LOGIN_MFA or DISABLE_MFA), and opaque challengeId
 3. **Short Expiry**: 5-minute expiry limits exposure window
 4. **Attempt Limits**: Maximum 3 verification attempts per challenge
-5. **Resend Cooldown**: 1-minute cooldown between resend requests
+5. **Resend Limits**: Maximum 3 resends per challenge, 1-minute cooldown between resends
 6. **Rate Limiting**: 5 challenge creations per hour per user
-7. **Single-Use**: Challenges consumed on successful verification, safe against concurrent requests
+7. **Single-Use**: Challenges consumed on successful verification, safe against concurrent requests (pessimistic locking)
 8. **Account Enumeration**: Consistent responses regardless of account existence
 9. **No Logging**: OTP values, challenge secrets never logged
 10. **Email Compromise Risk**: Acknowledged — email OTP less phishing-resistant than TOTP/FIDO2; mitigated by short expiry, attempt limits, and rate limiting
+11. **Disable MFA Isolation**: `DISABLE_MFA` challenges are separate from `LOGIN_MFA` challenges; they never issue login tokens. All unconsumed challenges for the user are cleaned up when MFA is disabled.
 
 ---
 

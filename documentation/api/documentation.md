@@ -276,7 +276,28 @@ All errors follow RFC 7807 Problem Details:
 
 ---
 
-### 1.10 Disable MFA
+### 1.10 Initiate MFA Disable
+**POST** `/auth/mfa/disable/initiate`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200):**
+```json
+{
+  "challengeId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Errors:**
+- 400: MFA not enabled / Email not verified
+- 401: Invalid/expired token
+- 403: Forbidden
+
+**Description:** Starts the MFA disable flow. Creates a `DISABLE_MFA` challenge, sends a 6-digit OTP to the user's verified email address, and returns the challenge ID. The client must then submit this challenge ID and the OTP to the disable-verification endpoint.
+
+---
+
+### 1.11 Verify MFA Disable Challenge
 **POST** `/auth/mfa/disable`
 
 **Headers:** `Authorization: Bearer <token>`
@@ -297,9 +318,11 @@ All errors follow RFC 7807 Problem Details:
 ```
 
 **Errors:**
-- 400: MFA not enabled / Invalid OTP
-- 401: Invalid/expired token
+- 400: MFA not enabled / Invalid or expired challenge / Wrong challenge purpose / Maximum attempts exceeded
+- 401: Invalid OTP code / Invalid/expired token
 - 403: Forbidden
+
+**Description:** Verifies a `DISABLE_MFA` challenge. The challenge must belong to the authenticated user and have purpose `DISABLE_MFA`. On successful verification, the challenge is consumed and MFA is disabled for the user. **No login tokens are issued** — this is a security-sensitive operation that only disables MFA.
 
 ---
 
