@@ -25,25 +25,58 @@ This document provides a detailed sprint-by-sprint breakdown for the CitiCore Ba
 
 **Team**: 3 Engineers (Security Lead, Backend Lead, DevOps)
 
-| Task ID | Description | Owner | Acceptance Criteria | ADR Ref |
-|---------|-------------|-------|---------------------|---------|
-| P0-01 | Add rate limiting to all auth endpoints (/login, /register, /verify, /resend) | Security Lead | 5 req/min login, 3 req/5min register enforced | DEC-009 |
-| P0-02 | Implement 6-digit numeric OTP for email verification (2.8M combinations) | Security Lead | `generateVerificationCode()` returns 6-digit numeric | DEC-009 |
-| P0-03 | Fix account-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/accounts/**` return 401 without JWT | - |
-| P0-04 | Fix user-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/api/v1/users/**` return 401 without JWT | - |
-| P0-05 | Add JWT secret validation at startup (min 32 chars, not default) | Security Lead | App fails fast if JWT_SECRET weak/missing | DEC-006 |
-| P0-06 | Remove all `System.out.println` from AuthService, use SLF4J | Backend Lead | No plaintext passwords/hashes in logs | - |
-| P0-07 | Add default JWT secret validation in config | DevOps | `${JWT_SECRET:CHANGE_ME}` with startup check | DEC-006 |
-| P0-08 | Fix idempotency key - add auth_user_id, unique constraint | Backend Lead | Migration V5 applied, cross-user collision impossible | - |
-| P0-09 | Fix account-service permitAll → authenticated | Backend Lead | SecurityConfig updated per SEC-009 | - |
-| P0-10 | Fix user-service permitAll → authenticated | Backend Lead | SecurityConfig updated per SEC-010 | - |
-| P0-11 | Configure non-root user in all Dockerfiles | DevOps | All images run as UID 1000 | - |
-| P0-12 | Add Flyway migration framework, disable ddl-auto:update | Backend Lead | `spring.jpa.hibernate.ddl-auto: validate` | - |
-| P0-13 | Configure Dead Letter Queues for all Kafka consumers | Backend Lead | DLQ topics exist, failed messages routed | - |
-| P0-14 | Add balance check constraints (balance >= 0, min balance) | Backend Lead | Migration V7 applied, constraints enforced | - |
-| P0-15 | Fix account_statement txn_ref unique per account | Backend Lead | Migration V6 applied, composite unique index | - |
+| Task ID | Description | Owner | Acceptance Criteria | ADR Ref | Status |
+|---------|-------------|-------|---------------------|---------|--------|
+| P0-01 | Add rate limiting to all auth endpoints (/login, /register, /verify, /resend) | Security Lead | 5 req/min login, 3 req/5min register enforced | DEC-009 | ✅ **COMPLETE** |
+| P0-02 | Implement 6-digit numeric OTP for email verification (2.8M combinations) | Security Lead | `generateVerificationCode()` returns 6-digit numeric | DEC-009 | ✅ **COMPLETE** |
+| P0-03 | Fix account-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/accounts/**` return 401 without JWT | - | ✅ **COMPLETE** |
+| P0-04 | Fix user-service SecurityConfig - require auth on all endpoints | Backend Lead | All `/api/v1/users/**` return 401 without JWT | - | ✅ **COMPLETE** |
+| P0-05 | Add JWT secret validation at startup (min 32 chars, not default) | Security Lead | App fails fast if JWT_SECRET weak/missing | DEC-006 | ✅ **COMPLETE** |
+| P0-06 | Remove all `System.out.println` from AuthService, use SLF4J | Backend Lead | No plaintext passwords/hashes in logs | - | ✅ **COMPLETE** |
+| P0-07 | Add default JWT secret validation in config | DevOps | `${JWT_SECRET:CHANGE_ME}` with startup check | DEC-006 | ✅ **COMPLETE** |
+| P0-08 | Fix idempotency key - add auth_user_id, unique constraint | Backend Lead | Migration V1 applied (transaction-service), composite unique constraint (auth_user_id, idempotency_key) | - | ✅ **COMPLETE** |
+| P0-09 | Fix account-service permitAll → authenticated | Backend Lead | SecurityConfig updated per SEC-009 | - | ✅ **COMPLETE** (same as P0-03) |
+| P0-10 | Fix user-service permitAll → authenticated | Backend Lead | SecurityConfig updated per SEC-010 | - | ✅ **COMPLETE** (same as P0-04) |
+| P0-11 | Configure non-root user in all Dockerfiles | DevOps | All images run as UID 1000 | - | ✅ **COMPLETE** |
+| P0-12 | Add Flyway migration framework, disable ddl-auto:update | Backend Lead | `spring.jpa.hibernate.ddl-auto: validate` | - | ✅ **COMPLETE** |
+| P0-13 | Configure Dead Letter Queues for all Kafka consumers | Backend Lead | DLQ topics exist, failed messages routed | - | ✅ **COMPLETE** |
+| P0-14 | Add balance check constraints (balance >= 0, min balance) | Backend Lead | Migration V3 applied (account-service), CHECK (balance >= 0) constraint | - | ✅ **COMPLETE** |
+| P0-15 | Fix account_statement txn_ref unique per account | Backend Lead | Migration V2 applied (account-service), composite unique index (account_number, txn_ref) | - | ✅ **COMPLETE** |
 
 **Definition of Done**: All P0 issues resolved, security baseline established, all services start without security warnings.
+
+---
+
+### Sprint 0 Actual Completion Summary
+
+**✅ COMPLETED (15/15 tasks = 100%)**
+
+| Task | Verification Evidence |
+|------|----------------------|
+| **P0-01: Auth Rate Limiting** | `@RateLimiter(name="register")`, `@RateLimiter(name="login")`, `@RateLimiter(name="verify")`, `@RateLimiter(name="resend")` on `AuthController` endpoints; Resilience4j config in shared `application.yml` |
+| **P0-02: 6-digit OTP** | `AuthService.generateVerificationCode()` returns 6-digit numeric (0-9) |
+| **P0-03/P0-09: Account Service Security** | `SecurityConfig.java`: all `/accounts/**` endpoints require `.authenticated()`; only actuator health/info permitted |
+| **P0-04/P0-10: User Service Security** | `SecurityConfig.java`: all `/api/v1/users/**` endpoints require `.authenticated()`; only actuator health/info permitted |
+| **P0-05: JWT Secret Validation** | `JwtUtils.validateSecret()`: checks null/empty, min 32 chars, rejects known placeholder values |
+| **P0-06: No System.out.println** | `AuthService.java` uses SLF4J `log.info/debug/warn` exclusively; no `System.out` references |
+| **P0-07: Default JWT Secret Validation** | Same as P0-05 — validates against known placeholder defaults |
+| **P0-08: User-Scoped Idempotency** | Transaction-service V1 migration adds `auth_user_id` column + composite unique constraint (`uk_idempotency_key_user`); `IdempotencyKey` entity has `authUserId` field; `TransactionService` uses `findByAuthUserIdAndIdempotencyKey()` |
+| **P0-11: Non-root Docker** | All 8 service Dockerfiles create `appuser` (UID 1000) and run as `USER appuser` |
+| **P0-12: Flyway Migration Framework** | Flyway dependencies added to auth-service, user-service, account-service, transaction-service; baseline migrations V1 for auth/user, V1/V2 for account/transaction; `spring.jpa.hibernate.ddl-auto: validate` in shared config; `application-local.yml` overrides to `update` for local dev |
+| **P0-13: Kafka Retry & DLQ** | account-service, transaction-service, notification-service, user-service all have `DefaultErrorHandler` with `DeadLetterPublishingRecoverer` + `ExponentialBackOff` (3 attempts, 2s/4s/8s); DLQ consumers persist to `dead_letter_events` (account/transaction) or log with headers (notification); DLQ replay controllers in account/transaction |
+| **P0-14: Balance Constraints** | Account entity has `@Check(name = "chk_balance_non_negative", constraints = "balance >= 0")`; Account-service V3 migration adds `CHECK (balance >= 0)` constraint to `accounts` table |
+| **P0-15: Statement Transaction Uniqueness** | Account-service V2 migration adds composite unique constraint `uk_statement_account_txn_ref` on `(account_number, txn_ref)` |
+
+---
+
+### Additional Work Completed (Beyond Original Sprint 0 Scope)
+
+| Feature | Files Modified | Description |
+|---------|---------------|-------------|
+| **Email OTP MFA (Login)** | `LoginChallenge.java`, `LoginChallengeRepository.java`, `EmailOtpService.java`, `AuthService.java`, `AuthController.java`, `OtpEventPublisher.java` | Full login MFA challenge flow: `LOGIN_MFA` purpose, 6-digit OTP, 5-min expiry, 3 attempts, BCrypt-hashed storage, pessimistic locking |
+| **MFA Enable** | `AuthController.enableEmailOtpMfa()`, `AuthService.enableEmailOtpMfa()` | Authenticated user with verified email can enable MFA; rejects already-enabled |
+| **MFA Disable (Two-Step)** | `AuthController.initiateMfaDisable()`, `disableMfa()`, `AuthService.initiateMfaDisable()`, `disableMfa()` | `DISABLE_MFA` purpose; challenge ownership + purpose verified; cleans up all user challenges; no token issuance |
+| **Documentation Updates** | ADR-009, API docs, local-dev guide, RBAC matrix, architecture diagrams | Complete enable/disable flow documentation with sequence diagrams, endpoint specs, security considerations |
 
 ---
 

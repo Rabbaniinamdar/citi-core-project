@@ -4,13 +4,17 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.*;
 import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.springframework.util.backoff.ExponentialBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -66,13 +70,27 @@ public class KafkaConfig {
     }
 
     @Bean
+    public DefaultErrorHandler errorHandler(
+            @Qualifier("jsonKafkaTemplate") KafkaTemplate<String, Object> kafkaTemplate) {
+
+        DeadLetterPublishingRecoverer recoverer =
+                new DeadLetterPublishingRecoverer(kafkaTemplate);
+
+        ExponentialBackOff backOff = new ExponentialBackOff(2000L, 2.0);
+        backOff.setMaxAttempts(3);
+
+        return new DefaultErrorHandler(recoverer, backOff);
+    }
+
+    @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String>
-    kafkaListenerContainerFactory() {
+    kafkaListenerContainerFactory(DefaultErrorHandler errorHandler) {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(stringConsumerFactory());
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
         factory.setConcurrency(1);
+        factory.setCommonErrorHandler(errorHandler);
         return factory;
     }
 
